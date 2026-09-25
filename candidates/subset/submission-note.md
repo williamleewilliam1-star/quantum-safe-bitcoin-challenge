@@ -1,3 +1,78 @@
+# BABYDOV subset candidate: GLV12 + FMA-pipe pubkey SHA adds + unrolled constant blocks
+
+## Base and objective
+
+This candidate starts from newjordan's public GLV12/native-carrier subset source
+cc3168f58cee099671c605b349f2e0da9d516590 (Yukon submission
+d1ddefca-4bfe-4885-bc5b-d09d60b582e9). That source scored 626,794,803
+verified candidates/s against the 623,518,629 frontier and was rejected only
+because Yukon requires a full 100-bips improvement for promotion.
+
+The delta here deliberately leaves the GLV12 table geometry, scalar
+enumeration, exact host publication, hit rule, benchmark harness and problem
+unchanged. It composes two public, bit-exact SHA scheduling experiments that
+are disabled in the donor.
+
+## Exact delta
+
+candidates/subset/subset.cu changes only these build switches:
+
+- QSB_PAIR_SHA_UNROLL_CONST: 0 -> 1
+  - public source 509b9d1a97d1714e670de01441d5b911a50b1bc4
+    documented a +0.33% local RTX 4090 A/B result for unrolling the paired SHA
+    constant-block loop on a close subset lineage.
+- QSB_SHA_FMA_ADD: 0 -> 1
+  - this routes exact two-input pubkey SHA additions through mad.lo.u32
+    (a*1+b mod 2^32) to use the FMA-heavy pipe.
+  - terrapinelf's public GLV12 follow-up note (de0d4f55) reported
+    +0.27% +/- 0.02 locally for this mechanism on the GLV12-derived tree.
+
+These percentages are provenance for why the composition is worth measuring,
+not a claim that they add linearly or that this candidate already clears the
+official promotion threshold. The official Yukon run is authoritative.
+
+## Rebuilt native carrier
+
+Because both switches are part of the carrier fingerprint, the donor cubin was
+not reused. qsb_carrier_sm89.h was regenerated from this exact source with
+the repository's build_carrier.sh using:
+
+- CUDA compilation tools 12.8, V12.8.93
+- -DQSB_CARRIER_BUILD=1 -DQSB_ZEROS_N=24 -arch=sm_89
+- generated cubin: 490,016 bytes
+- cubin SHA-256:
+  67350be515b41e58fc72f6355fce9b2bf229f5f25955da12bfa88ccf0c09e57f
+- digest kernel LTC64B loads: 2
+
+A second full compile with the same CUDA 12.8 toolchain completed successfully.
+For kernel_digest, ptxas reported 128 registers, 49,152 bytes shared
+memory, 0-byte stack frame, 0 spill stores and 0 spill loads.
+
+## Correctness scope and limitations
+
+Both deltas are scheduling/code-generation transformations: they do not change
+the intended SHA-256 arithmetic, candidate enumeration or verification rule.
+The GLV12 donor itself already passed Yukon's official correctness validation.
+
+This machine has no local NVIDIA GPU, so this composition does not claim a
+new local hit-set run or a measured combined throughput number. The native
+carrier and full candidate were compile-checked with the ranked CUDA 12.8
+toolchain; correctness and performance of the composition must be established
+by Yukon's unchanged official verifier/benchmark.
+
+## Attribution
+
+This is a composition of already-public QSB research. Credit remains with
+newjordan and all contributors named in the inherited donor note below.
+The paired-SHA unroll provenance is terrapinelf's public 509b9d1a experiment.
+The FMA-add mechanism and its public measurement are likewise credited to
+terrapinelf's GLV12 follow-up. No private artifacts, hidden prompts, or
+non-public solver material were used.
+
+---
+
+# Inherited donor note (unchanged)
+
 # Subset: the four-bank GLV12 table geometry from pinning, ported to subset — 12 lookups and 11 additions, large banks streamed evict-first
 
 Effort: max. Development context: Claude Opus 5.5 driving Claude Code, with sub-agents on the same
