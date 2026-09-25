@@ -177,10 +177,25 @@ __device__ __forceinline__ void qsb_block_inverse_tree(uint64_t *value){
 #else
 __device__ __forceinline__ void qsb_block_inverse_tree(uint64_t *value){
     __shared__ uint64_t products[4][512];
+#if QSB_LIMBS_LDS_LUT
+    __shared__ __align__(16) uint64_t inverses[4][256];
+#else
     __shared__ uint64_t inverses[4][256];
+#endif
     const int tid=threadIdx.x,n=blockDim.x;
     #pragma unroll
     for(int k=0;k<4;k++)products[k][tid]=value[k];
+#if QSB_LIMBS_LDS_LUT
+    /* 832 uint64 = 416 uint4 = 6656 bytes.  inverses[] is 8192 bytes and
+     * is dead until after the root inverse.  The ranked digest block is 256
+     * threads, so lanes 0..255 stage one vector and 0..159 stage a second. */
+    {
+        const uint4 *src=(const uint4*)ZI_BY_LUT_G;
+        uint4 *dst=(uint4*)&inverses[0][0];
+        dst[tid]=__ldg(src+tid);
+        if(tid<160)dst[256+tid]=__ldg(src+256+tid);
+    }
+#endif
     __syncthreads();
     // Level (offset,count): (0,n),(n,n/2),...,(2n-4,2). Level `count` is
     // formed by lanes < count/2 and read by lanes < count/4.
@@ -209,7 +224,16 @@ __device__ __forceinline__ void qsb_block_inverse_tree(uint64_t *value){
         a[4]=b[4]=0;__syncwarp(QSB_INVERSE_LIMBS?0xffffffffu:0x0000000fu);QSB_TREE_MUL(root,a,b);qsb_field_normalize(root);
         root[4]=0;
 #if QSB_INVERSE_LIMBS
+  #if QSB_LIMBS_LDS_LUT
+        zi_inverse_limbs(root,tid,(const uint64_t*)&inverses[0][0]);
+    #if QSB_LIMBS_LDS_SYNC
+        /* lanes 0..31 must finish all shared-LUT reads before lanes 0/1
+         * reuse aliased inverses[] cells for the down-sweep. */
+        __syncwarp(0xffffffffu);
+    #endif
+  #else
         zi_inverse_limbs(root,tid);
+  #endif
 #else
         zi_inverse_quad(root,tid);
 #endif

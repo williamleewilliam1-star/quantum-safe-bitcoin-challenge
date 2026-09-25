@@ -3473,6 +3473,7 @@ static void qsb_table_l2_window(cudaStream_t *streams, int n_streams,
     QSB_CARRIER_KV(QSB_GT_HEAL) QSB_CARRIER_KV(QSB_HOST_VERIFY) QSB_CARRIER_KV(QSB_HV_STATS) \
     QSB_CARRIER_KV(QSB_ISO_FAST_X) QSB_CARRIER_KV(QSB_ISO_FUSED_ROOT_SCALE) \
     QSB_CARRIER_KV(QSB_ISO_RELOAD_R) QSB_CARRIER_KV(QSB_ISO_ROOT_SCALE) \
+    QSB_CARRIER_KV(QSB_LIMBS_LDS_LUT) QSB_CARRIER_KV(QSB_LIMBS_LDS_SYNC) \
     QSB_CARRIER_KV(QSB_K2S_PARITY_NARROW) QSB_CARRIER_KV(QSB_K2S_PARITY_WINDOW) QSB_CARRIER_KV(QSB_K32) \
     QSB_CARRIER_KV(QSB_NEGFOLD_PARITY) QSB_CARRIER_KV(QSB_NEG_SHORT) QSB_CARRIER_KV(QSB_PAIR_SHARED) \
     QSB_CARRIER_KV(QSB_PAIR_SHA_UNROLL_CONST) QSB_CARRIER_KV(QSB_PAIR_SHA_UNROLL_CONST_INNER) \
@@ -4033,6 +4034,11 @@ int main(int argc, char **argv) {
     if(QSB_TO_SYMBOL(QSB_U2R,h_u2r,sizeof(h_u2r))!=cudaSuccess){
         fprintf(stderr,"ERROR: QSB_U2R upload failed\n");return 1;
     }
+#if QSB_LIMBS_LDS_LUT
+    if(QSB_TO_SYMBOL(ZI_BY_LUT_G,ZI_BY_LUT,sizeof(uint64_t)*832)!=cudaSuccess){
+        fprintf(stderr,"ERROR: ZI_BY_LUT_G upload failed\n");return 1;
+    }
+#endif
     if(QSB_TO_SYMBOL(QSB_U2R_ISO,iso.u2r_iso,sizeof(iso.u2r_iso))!=cudaSuccess ||
        QSB_TO_SYMBOL(QSB_ISO_INVU,iso.invu,sizeof(iso.invu))!=cudaSuccess ||
        QSB_TO_SYMBOL(QSB_ISO_XNEG,&iso.xneg,sizeof(iso.xneg))!=cudaSuccess){

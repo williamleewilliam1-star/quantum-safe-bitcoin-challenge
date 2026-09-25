@@ -52,7 +52,7 @@ for kid, pat in want:
 for g in ("qsb_carrier_knobs", "QSB_CONST_SCHEDULE", "QSB_U2R", "QSB_U2R_ISO", "QSB_ISO_INVU",
           "QSB_ISO_XNEG", "QSB_U2R_C", "QSB_PUSH_WORDS", "BINOM_C", "WIN3", "QSB_WINDOW_FIRST",
           "QSB_WINDOW_SECOND", "QSB_WINDOW_CLASS", "QSB_FIRST_CLASS", "QSB_LANE_CLASS",
-          "QSB_FIRST_UNIQUE", "QSB_FIRST_COUNT"):
+          "QSB_FIRST_UNIQUE", "QSB_FIRST_COUNT", "ZI_BY_LUT_G"):
     if not re.search(r"\b%s\b" % g, syms):
         sys.exit(f"build_carrier: global {g} missing from image")
 # The hint must be present in the digest kernel (the only table reader on the search path).

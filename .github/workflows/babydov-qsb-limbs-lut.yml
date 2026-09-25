@@ -1,0 +1,64 @@
+name: BABYDOV QSB 32-lane LDS LUT static build
+
+on:
+  push:
+    branches:
+      - babydov/subset-glv11-l1lut
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-carrier:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    steps:
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 libssl-dev ca-certificates
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Checkout candidate branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build native sm_89 carrier
+        working-directory: candidates/subset
+        shell: bash
+        run: |
+          chmod +x build_carrier.sh
+          ./build_carrier.sh 24 2>&1 | tee /tmp/qsb-carrier-build.log
+
+      - name: Compile complete subset candidate
+        working-directory: candidates/subset
+        shell: bash
+        run: |
+          nvcc -O3 -DQSB_ZEROS_N=24 -Xptxas=-v -o /tmp/qsb-subset subset.cu -lcrypto -lm 2>&1 | tee /tmp/qsb-candidate-build.log
+
+      - name: Record reproducibility metadata
+        shell: bash
+        run: |
+          nvcc --version > /tmp/nvcc-version.txt
+          sha256sum candidates/subset/qsb_carrier_sm89.h > /tmp/qsb-carrier-header.sha256
+          printf '%s\n' "$GITHUB_SHA" > /tmp/source-commit.txt
+          grep -E 'QSB_PAIR_SHA_UNROLL_CONST|QSB_SHA_FMA_ADD' candidates/subset/subset.cu > /tmp/enabled-flags.txt
+
+      - name: Upload generated carrier and logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: qsb-glv12-sha-carrier
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            candidates/subset/qsb_carrier_sm89.h
+            /tmp/qsb-carrier-build.log
+            /tmp/qsb-candidate-build.log
+            /tmp/qsb-carrier-header.sha256
+            /tmp/nvcc-version.txt
+            /tmp/source-commit.txt
+            /tmp/enabled-flags.txt

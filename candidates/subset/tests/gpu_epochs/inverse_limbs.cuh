@@ -9,7 +9,11 @@
  * Each row's signed ninth limb is replicated. Normalize independent limb
  * products with ballot carry/borrow lookahead, then perform the exact >>30.
  * The original cap, isomorphic scale and independent fallback are retained. */
+#if QSB_LIMBS_LDS_LUT
+__device__ __forceinline__ bool zi_inverse_limbs_bounded(uint64_t *R,int lane,const uint64_t *lut){
+#else
 __device__ __forceinline__ bool zi_inverse_limbs_bounded(uint64_t *R,int lane){
+#endif
     constexpr unsigned mask=0xffffffffu;
     const int digit=lane&7,row=lane>>3,start=lane&~7;
     const unsigned odd=row&1,rs=row>>1;
@@ -30,7 +34,11 @@ __device__ __forceinline__ bool zi_inverse_limbs_bounded(uint64_t *R,int lane){
         ++batches;
         const uint32_t f0=__shfl_sync(mask,x,0),g0=__shfl_sync(mask,x,8);
         int32_t top,bottom;
+#if QSB_LIMBS_LDS_LUT
+        delta=zi_divstep30_column(delta,f0,g0,rs,&top,&bottom,lut);
+#else
         delta=zi_divstep30_column(delta,f0,g0,rs,&top,&bottom);
+#endif
         const int32_t selected=odd?bottom:top;
         const int32_t a=__shfl_sync(mask,selected,odd?24:0);
         const int32_t b=__shfl_sync(mask,selected,odd?8:16);
@@ -103,8 +111,13 @@ __device__ __forceinline__ bool zi_inverse_limbs_bounded(uint64_t *R,int lane){
     R[4]=0;
     return true;
 }
+#if QSB_LIMBS_LDS_LUT
+__device__ __forceinline__ void zi_inverse_limbs(uint64_t *R,int lane,const uint64_t *lut){
+    if(zi_inverse_limbs_bounded(R,lane,lut))return;
+#else
 __device__ __forceinline__ void zi_inverse_limbs(uint64_t *R,int lane){
     if(zi_inverse_limbs_bounded(R,lane))return;
+#endif
     if(lane==0){
         QsbInverseWords out=qsb_root_fermat({R[0],R[1],R[2],R[3]});
         R[0]=out.a;R[1]=out.b;R[2]=out.c;R[3]=out.d;

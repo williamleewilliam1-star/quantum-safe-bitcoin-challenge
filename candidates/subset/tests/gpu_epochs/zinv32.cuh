@@ -54,6 +54,18 @@ static inline uint32_t zi_clz32(uint32_t x){return x?(uint32_t)__builtin_clz(x):
 #else
 #define ZI_CONST static const
 #endif
+#ifndef QSB_LIMBS_LDS_LUT
+#define QSB_LIMBS_LDS_LUT 0
+#endif
+#ifndef QSB_LIMBS_LDS_SYNC
+#define QSB_LIMBS_LDS_SYNC 0
+#endif
+#if QSB_LIMBS_LDS_LUT
+/* BABYDOV 32-lane adaptation: the host uploads the exact immutable divstep
+ * table here.  qsb_block_inverse_tree stages it into otherwise-dead shared
+ * inverse storage before the root inverse begins. */
+__device__ __align__(16) uint64_t ZI_BY_LUT_G[832];
+#endif
 // Six-step extension of the PR296 table-driven divstep mechanism.
 // Odd rescaling preserves the decision sequence: index by g/f modulo64.
 // For odd f, f*(2-f*f) is its inverse modulo64. Five exact groups give30 steps.
@@ -240,14 +252,24 @@ ZI_DEV int32_t zi_divstep30_by(int32_t delta,uint32_t f,uint32_t g,
  * lanes 2/3 column one, cutting four matrix multiplies per six-step group.
  * Each lane selects its row before two shuffles reconstruct (ka,kb).
  * f,g and delta remain identical in all four lanes; arithmetic is unchanged. */
+#if QSB_LIMBS_LDS_LUT && defined(__CUDA_ARCH__)
+ZI_DEV int32_t zi_divstep30_column(int32_t delta,uint32_t f,uint32_t g,
+                                  uint32_t column,int32_t *top,int32_t *bottom,
+                                  const uint64_t *lut=ZI_BY_LUT){
+#else
 ZI_DEV int32_t zi_divstep30_column(int32_t delta,uint32_t f,uint32_t g,
                                   uint32_t column,int32_t *top,int32_t *bottom){
+#endif
     int32_t u=1-(int32_t)column,q=(int32_t)column;
     #pragma unroll
     for(int k=0;k<5;k++){
         const int32_t dc=delta<-6?-6:(delta>6?6:delta);
         const uint32_t fi=f*(2u-f*f),ratio=(g*fi)&63u;
+#if QSB_LIMBS_LDS_LUT && defined(__CUDA_ARCH__)
+        const uint64_t packed=lut[((uint32_t)(dc+6)<<6)|ratio];
+#else
         const uint64_t packed=ZI_BY_LUT[((uint32_t)(dc+6)<<6)|ratio];
+#endif
         const uint32_t e=(uint32_t)packed,flags=(uint32_t)(packed>>32);
         const int32_t a=zi_by_signed_byte<0>(e),b=zi_by_signed_byte<1>(e);
         const int32_t c=zi_by_signed_byte<2>(e),d=zi_by_signed_byte<3>(e);
