@@ -252,20 +252,37 @@ ZI_DEV int32_t zi_divstep30_by(int32_t delta,uint32_t f,uint32_t g,
  * lanes 2/3 column one, cutting four matrix multiplies per six-step group.
  * Each lane selects its row before two shuffles reconstruct (ka,kb).
  * f,g and delta remain identical in all four lanes; arithmetic is unchanged. */
-#if QSB_LIMBS_LDS_LUT
-ZI_DEV int32_t zi_divstep30_column(int32_t delta,uint32_t f,uint32_t g,
-                                  uint32_t column,int32_t *top,int32_t *bottom,
-                                  uint32_t lut_smem){
-#else
 ZI_DEV int32_t zi_divstep30_column(int32_t delta,uint32_t f,uint32_t g,
                                   uint32_t column,int32_t *top,int32_t *bottom){
-#endif
     int32_t u=1-(int32_t)column,q=(int32_t)column;
     #pragma unroll
     for(int k=0;k<5;k++){
         const int32_t dc=delta<-6?-6:(delta>6?6:delta);
         const uint32_t fi=f*(2u-f*f),ratio=(g*fi)&63u;
-#if QSB_LIMBS_LDS_LUT && defined(__CUDA_ARCH__)
+        const uint64_t packed=ZI_BY_LUT[((uint32_t)(dc+6)<<6)|ratio];
+        const uint32_t e=(uint32_t)packed,flags=(uint32_t)(packed>>32);
+        const int32_t a=zi_by_signed_byte<0>(e),b=zi_by_signed_byte<1>(e);
+        const int32_t c=zi_by_signed_byte<2>(e),d=zi_by_signed_byte<3>(e);
+        const uint32_t nf=((uint32_t)a*f+(uint32_t)b*g)>>6;
+        g=((uint32_t)c*f+(uint32_t)d*g)>>6;f=nf;
+        const int32_t nu=a*u+b*q;
+        q=c*u+d*q;u=nu;
+        const int32_t sm=(int32_t)flags>>31;
+        delta=((delta^sm)-sm)+zi_by_signed_byte<0>(flags);
+    }
+    *top=u;*bottom=q;
+    return delta;
+}
+#if QSB_LIMBS_LDS_LUT
+ZI_DEV int32_t zi_divstep30_column(int32_t delta,uint32_t f,uint32_t g,
+                                  uint32_t column,int32_t *top,int32_t *bottom,
+                                  uint32_t lut_smem){
+    int32_t u=1-(int32_t)column,q=(int32_t)column;
+    #pragma unroll
+    for(int k=0;k<5;k++){
+        const int32_t dc=delta<-6?-6:(delta>6?6:delta);
+        const uint32_t fi=f*(2u-f*f),ratio=(g*fi)&63u;
+#ifdef __CUDA_ARCH__
         const uint32_t lut_idx=((uint32_t)(dc+6)<<6)|ratio;
         const uint32_t lut_addr=lut_smem+(lut_idx<<3);
         uint64_t packed;
@@ -286,6 +303,7 @@ ZI_DEV int32_t zi_divstep30_column(int32_t delta,uint32_t f,uint32_t g,
     *top=u;*bottom=q;
     return delta;
 }
+#endif
 
 /* ======================= 4-lane cooperative form =======================
  * Lanes 0..3 of one warp run the SAME instruction stream except the decision loop
