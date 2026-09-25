@@ -5,6 +5,7 @@
 #ifndef QSB_REMEASURE_TAG_0921R3
 #define QSB_REMEASURE_TAG_0921R3 1 /* no-op: exact-source PR897 remeasurement */
 #endif
-/* Keep the paired SHA constant-block loop compact on the ranked PTX route. */
-#define QSB_PAIR_SHA_UNROLL_CONST 0
+/* Compose two public, bit-exact SHA scheduling experiments on the GLV12 near-miss. */
+#define QSB_PAIR_SHA_UNROLL_CONST 1   /* public A/B: +0.33% on a close subset lineage */
+#define QSB_SHA_FMA_ADD 1   /* public GLV12 A/B: +0.27% ±0.02, exact mod 2^32 */
 #include "tests/gpu_epochs/tree.cu"
