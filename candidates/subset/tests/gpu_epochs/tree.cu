@@ -18,6 +18,9 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#ifndef QSB_L2_FETCH64
+#define QSB_L2_FETCH64 1
+#endif
 /* QSB_GROUP_CAP_EXACT (after i34-9, 14675ab0): the epoch-group buffers hold the exact maximum a
  * launch can span for the ranked shape (cut 137, 6 early omissions, 1,048,576 epochs per launch)
  * instead of 2*epochs+4, freeing ~450 MiB for the GLV11 table. The maximum over all 7,838 launches
@@ -3629,6 +3632,22 @@ int main(int argc, char **argv) {
     }
 
     cudaSetDevice(gpu_index);
+#if QSB_L2_FETCH64
+    /* Explicitly request 64-byte L2 fetch granularity for the GLV10 cold
+     * 64-byte records. The device-side loads already carry the L2::64B hint;
+     * this host setting makes the driver's fetch policy explicit. */
+    {
+        size_t l2_before = 0;
+        cudaDeviceGetLimit(&l2_before, cudaLimitMaxL2FetchGranularity);
+        const cudaError_t l2_err = cudaDeviceSetLimit(cudaLimitMaxL2FetchGranularity, 64);
+        size_t l2_after = l2_before;
+        if (l2_err == cudaSuccess)
+            cudaDeviceGetLimit(&l2_after, cudaLimitMaxL2FetchGranularity);
+        else
+            (void)cudaGetLastError();
+        printf("  L2 fetch granularity: %zu -> %zu B\n", l2_before, l2_after);
+    }
+#endif
     cudaDeviceProp prop; cudaGetDeviceProperties(&prop, gpu_index);
     printf("QSB Digest Search [GPU %d]\n", gpu_index);
     printf("  GPU: %s (%d SMs)\n", prop.name, prop.multiProcessorCount);
