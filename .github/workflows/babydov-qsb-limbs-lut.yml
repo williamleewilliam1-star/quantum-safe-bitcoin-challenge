@@ -32,7 +32,11 @@ jobs:
         shell: bash
         run: |
           chmod +x build_carrier.sh
-          ./build_carrier.sh 24 2>&1 | tee /tmp/qsb-carrier-build.log
+          if ! ./build_carrier.sh 24 2>&1 | tee /tmp/qsb-carrier-build.log; then
+            echo "=== direct sm_89 diagnostic compile ==="
+            nvcc -O3 -DQSB_ZEROS_N=24 -DQSB_CARRIER_BUILD=1 -arch=sm_89 -cubin -Xptxas=-v -o /tmp/qsb-diag.cubin subset.cu 2>&1 || true
+            exit 1
+          fi
 
       - name: Compile complete subset candidate
         working-directory: candidates/subset
