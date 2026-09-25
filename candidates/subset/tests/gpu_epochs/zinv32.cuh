@@ -252,7 +252,7 @@ ZI_DEV int32_t zi_divstep30_by(int32_t delta,uint32_t f,uint32_t g,
  * lanes 2/3 column one, cutting four matrix multiplies per six-step group.
  * Each lane selects its row before two shuffles reconstruct (ka,kb).
  * f,g and delta remain identical in all four lanes; arithmetic is unchanged. */
-#if QSB_LIMBS_LDS_LUT && defined(__CUDA_ARCH__)
+#if QSB_LIMBS_LDS_LUT
 ZI_DEV int32_t zi_divstep30_column(int32_t delta,uint32_t f,uint32_t g,
                                   uint32_t column,int32_t *top,int32_t *bottom,
                                   const uint64_t *lut=ZI_BY_LUT){
