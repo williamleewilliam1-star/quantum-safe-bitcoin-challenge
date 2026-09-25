@@ -45,7 +45,7 @@ jobs:
         run: |
           nvcc --version > /tmp/nvcc-version.txt
           sha256sum candidates/subset/qsb_carrier_sm89.h > /tmp/qsb-carrier-header.sha256
-          git rev-parse HEAD > /tmp/source-commit.txt
+          printf '%s\n' "$GITHUB_SHA" > /tmp/source-commit.txt
           grep -E 'QSB_PAIR_SHA_UNROLL_CONST|QSB_SHA_FMA_ADD' candidates/subset/subset.cu > /tmp/enabled-flags.txt
 
       - name: Upload generated carrier and logs
