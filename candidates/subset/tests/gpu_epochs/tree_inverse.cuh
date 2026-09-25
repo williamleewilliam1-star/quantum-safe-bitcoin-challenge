@@ -225,7 +225,8 @@ __device__ __forceinline__ void qsb_block_inverse_tree(uint64_t *value){
         root[4]=0;
 #if QSB_INVERSE_LIMBS
   #if QSB_LIMBS_LDS_LUT
-        zi_inverse_limbs(root,tid,(const uint64_t*)&inverses[0][0]);
+        const uint32_t lut_smem=(uint32_t)__cvta_generic_to_shared((const void*)&inverses[0][0]);
+        zi_inverse_limbs(root,tid,lut_smem);
     #if QSB_LIMBS_LDS_SYNC
         /* lanes 0..31 must finish all shared-LUT reads before lanes 0/1
          * reuse aliased inverses[] cells for the down-sweep. */

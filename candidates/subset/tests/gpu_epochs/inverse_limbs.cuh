@@ -10,7 +10,7 @@
  * products with ballot carry/borrow lookahead, then perform the exact >>30.
  * The original cap, isomorphic scale and independent fallback are retained. */
 #if QSB_LIMBS_LDS_LUT
-__device__ __forceinline__ bool zi_inverse_limbs_bounded(uint64_t *R,int lane,const uint64_t *lut){
+__device__ __forceinline__ bool zi_inverse_limbs_bounded(uint64_t *R,int lane,uint32_t lut_smem){
 #else
 __device__ __forceinline__ bool zi_inverse_limbs_bounded(uint64_t *R,int lane){
 #endif
@@ -35,7 +35,7 @@ __device__ __forceinline__ bool zi_inverse_limbs_bounded(uint64_t *R,int lane){
         const uint32_t f0=__shfl_sync(mask,x,0),g0=__shfl_sync(mask,x,8);
         int32_t top,bottom;
 #if QSB_LIMBS_LDS_LUT
-        delta=zi_divstep30_column(delta,f0,g0,rs,&top,&bottom,lut);
+        delta=zi_divstep30_column(delta,f0,g0,rs,&top,&bottom,lut_smem);
 #else
         delta=zi_divstep30_column(delta,f0,g0,rs,&top,&bottom);
 #endif
@@ -112,8 +112,8 @@ __device__ __forceinline__ bool zi_inverse_limbs_bounded(uint64_t *R,int lane){
     return true;
 }
 #if QSB_LIMBS_LDS_LUT
-__device__ __forceinline__ void zi_inverse_limbs(uint64_t *R,int lane,const uint64_t *lut){
-    if(zi_inverse_limbs_bounded(R,lane,lut))return;
+__device__ __forceinline__ void zi_inverse_limbs(uint64_t *R,int lane,uint32_t lut_smem){
+    if(zi_inverse_limbs_bounded(R,lane,lut_smem))return;
 #else
 __device__ __forceinline__ void zi_inverse_limbs(uint64_t *R,int lane){
     if(zi_inverse_limbs_bounded(R,lane))return;

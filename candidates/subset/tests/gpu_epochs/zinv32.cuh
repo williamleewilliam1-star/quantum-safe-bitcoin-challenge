@@ -255,7 +255,7 @@ ZI_DEV int32_t zi_divstep30_by(int32_t delta,uint32_t f,uint32_t g,
 #if QSB_LIMBS_LDS_LUT
 ZI_DEV int32_t zi_divstep30_column(int32_t delta,uint32_t f,uint32_t g,
                                   uint32_t column,int32_t *top,int32_t *bottom,
-                                  const uint64_t *lut=ZI_BY_LUT){
+                                  uint32_t lut_smem){
 #else
 ZI_DEV int32_t zi_divstep30_column(int32_t delta,uint32_t f,uint32_t g,
                                   uint32_t column,int32_t *top,int32_t *bottom){
@@ -266,7 +266,10 @@ ZI_DEV int32_t zi_divstep30_column(int32_t delta,uint32_t f,uint32_t g,
         const int32_t dc=delta<-6?-6:(delta>6?6:delta);
         const uint32_t fi=f*(2u-f*f),ratio=(g*fi)&63u;
 #if QSB_LIMBS_LDS_LUT && defined(__CUDA_ARCH__)
-        const uint64_t packed=lut[((uint32_t)(dc+6)<<6)|ratio];
+        const uint32_t lut_idx=((uint32_t)(dc+6)<<6)|ratio;
+        const uint32_t lut_addr=lut_smem+(lut_idx<<3);
+        uint64_t packed;
+        asm("ld.shared.u64 %0, [%1];" : "=l"(packed) : "r"(lut_addr));
 #else
         const uint64_t packed=ZI_BY_LUT[((uint32_t)(dc+6)<<6)|ratio];
 #endif
