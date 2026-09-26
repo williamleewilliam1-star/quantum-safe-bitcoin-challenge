@@ -59,6 +59,7 @@ jobs:
         run: |
           nvcc --version > /tmp/nvcc-version.txt
           sha256sum candidates/subset/qsb_carrier_sm89.h > /tmp/qsb-carrier-header.sha256
+          cp candidates/subset/qsb_carrier_sm89.h /tmp/qsb_carrier_sm89.h
           printf '%s\n' "$GITHUB_SHA" > /tmp/source-commit.txt
           git diff --stat a137e289b236c3622eba80f1ad5e9a0c8a91eb67..HEAD -- candidates/subset > /tmp/source-diff-stat.txt
 
@@ -69,7 +70,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           path: |
-            candidates/subset/qsb_carrier_sm89.h
+            /tmp/qsb_carrier_sm89.h
             /tmp/qsb-carrier-build.log
             /tmp/qsb-candidate-build.log
             /tmp/qsb-carrier-header.sha256
