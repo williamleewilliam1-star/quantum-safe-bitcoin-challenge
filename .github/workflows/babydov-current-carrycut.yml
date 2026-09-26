@@ -30,8 +30,11 @@ jobs:
       - name: Verify intended source delta
         shell: bash
         run: |
-          git diff --check 196861248169aed40f0b0ec051f74c29174d3d5f..HEAD -- candidates/subset
-          git diff --stat 196861248169aed40f0b0ec051f74c29174d3d5f..HEAD -- candidates/subset
+          SOURCE_COMMIT=$(git log -1 --format=%H -- candidates/subset/GPUMath.h candidates/subset/chain_replay_field.cuh)
+          BASE_COMMIT=$(git rev-parse "$SOURCE_COMMIT^")
+          test "$BASE_COMMIT" = "196861248169aed40f0b0ec051f74c29174d3d5f"
+          git diff --check "$BASE_COMMIT..$SOURCE_COMMIT" -- candidates/subset
+          git diff --stat "$BASE_COMMIT..$SOURCE_COMMIT" -- candidates/subset
           grep -F 'addc.cc.u32 z8, 0, w7;' candidates/subset/GPUMath.h
           grep -F 'addc.u32 z3, z3, 0;' candidates/subset/GPUMath.h
           grep -F 'addc.cc.u32 z8, 0, w7;' candidates/subset/chain_replay_field.cuh
