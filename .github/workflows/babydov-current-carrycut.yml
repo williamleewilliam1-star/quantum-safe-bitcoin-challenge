@@ -1,0 +1,74 @@
+name: BABYDOV current-frontier carry-cut CUDA 12.8 build
+
+on:
+  push:
+    branches:
+      - babydov/subset-current-carrycut
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-carrier:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    steps:
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 libssl-dev ca-certificates
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Checkout candidate branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify intended source delta
+        shell: bash
+        run: |
+          git diff --check 196861248169aed40f0b0ec051f74c29174d3d5f..HEAD -- candidates/subset
+          git diff --stat 196861248169aed40f0b0ec051f74c29174d3d5f..HEAD -- candidates/subset
+          grep -F 'addc.cc.u32 z8, 0, w7;' candidates/subset/GPUMath.h
+          grep -F 'addc.u32 z3, z3, 0;' candidates/subset/GPUMath.h
+          grep -F 'addc.cc.u32 z8, 0, w7;' candidates/subset/chain_replay_field.cuh
+          grep -F 'addc.u32 z3, z3, 0;' candidates/subset/chain_replay_field.cuh
+
+      - name: Build native sm_89 carrier
+        working-directory: candidates/subset
+        shell: bash
+        run: |
+          chmod +x build_carrier.sh
+          ./build_carrier.sh 24 2>&1 | tee /tmp/qsb-carrier-build.log
+
+      - name: Compile complete subset candidate
+        working-directory: candidates/subset
+        shell: bash
+        run: |
+          nvcc -O3 -DQSB_ZEROS_N=24 -Xptxas=-v -o /tmp/qsb-subset subset.cu -lcrypto -lm 2>&1 | tee /tmp/qsb-candidate-build.log
+
+      - name: Record reproducibility metadata
+        shell: bash
+        run: |
+          nvcc --version > /tmp/nvcc-version.txt
+          sha256sum candidates/subset/qsb_carrier_sm89.h > /tmp/qsb-carrier-header.sha256
+          printf '%s\n' "$GITHUB_SHA" > /tmp/source-commit.txt
+          git diff --stat 196861248169aed40f0b0ec051f74c29174d3d5f..HEAD -- candidates/subset > /tmp/source-diff-stat.txt
+
+      - name: Upload generated carrier and logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: qsb-current-carrycut-artifact
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            candidates/subset/qsb_carrier_sm89.h
+            /tmp/qsb-carrier-build.log
+            /tmp/qsb-candidate-build.log
+            /tmp/qsb-carrier-header.sha256
+            /tmp/nvcc-version.txt
+            /tmp/source-commit.txt
+            /tmp/source-diff-stat.txt
