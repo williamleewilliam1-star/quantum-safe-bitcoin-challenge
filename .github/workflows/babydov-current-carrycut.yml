@@ -32,7 +32,7 @@ jobs:
         run: |
           SOURCE_COMMIT=$(git log -1 --format=%H -- candidates/subset/GPUMath.h candidates/subset/chain_replay_field.cuh)
           BASE_COMMIT=$(git rev-parse "$SOURCE_COMMIT^")
-          test "$BASE_COMMIT" = "196861248169aed40f0b0ec051f74c29174d3d5f"
+          test "$BASE_COMMIT" = "a137e289b236c3622eba80f1ad5e9a0c8a91eb67"
           git diff --check "$BASE_COMMIT..$SOURCE_COMMIT" -- candidates/subset
           git diff --stat "$BASE_COMMIT..$SOURCE_COMMIT" -- candidates/subset
           grep -F 'addc.cc.u32 z8, 0, w7;' candidates/subset/GPUMath.h
@@ -59,7 +59,7 @@ jobs:
           nvcc --version > /tmp/nvcc-version.txt
           sha256sum candidates/subset/qsb_carrier_sm89.h > /tmp/qsb-carrier-header.sha256
           printf '%s\n' "$GITHUB_SHA" > /tmp/source-commit.txt
-          git diff --stat 196861248169aed40f0b0ec051f74c29174d3d5f..HEAD -- candidates/subset > /tmp/source-diff-stat.txt
+          git diff --stat a137e289b236c3622eba80f1ad5e9a0c8a91eb67..HEAD -- candidates/subset > /tmp/source-diff-stat.txt
 
       - name: Upload generated carrier and logs
         uses: actions/upload-artifact@v4
