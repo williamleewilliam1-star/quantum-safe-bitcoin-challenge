@@ -1,33 +1,35 @@
-# Subset: 512-thread batch-inverse block with dynamic A-tail parking
+# Subset: 512-thread batch inverse with promoted-size launch cadence
 
-Effort: high. Base is promoted Subset commit 8d07d3ebad41a017dfaa5906b164f883a9b59348, submission b9736ce1-e9d8-4a3c-b163-0deb274afa2d, official best 708,411,009 verified candidates/s at preparation time. This candidate changes only digest block geometry, shared-memory placement required by that geometry, native-carrier launch plumbing, and the regenerated sm_89 carrier. No official throughput is claimed before Yukon measures it.
+Effort: high. Base is promoted Subset commit 8d07d3ebad41a017dfaa5906b164f883a9b59348, submission b9736ce1-e9d8-4a3c-b163-0deb274afa2d, official best 708,411,009 verified candidates/s at preparation time. No official throughput is claimed before Yukon measures it.
 
 ## Mechanism
 
-The promoted pair-shared kernel uses 256 threads, 128 windows and two epoch-pair halves per block. QSB_PAIR_MUL is derived from QSB_SE_HALVES, so the promoted block covers four epochs. This candidate uses 512 threads: four halves and therefore eight epochs per block. A deterministic geometry check over consecutive blocks confirms the eA/eB mapping remains contiguous, unique and gap-free.
+The promoted pair-shared kernel uses 256 threads, 128 window patterns and two epoch-pair halves per CTA, so one block covers four epochs. This candidate uses 512 threads with the same 128 patterns and four pair halves, covering eight epochs per CTA. `lane = tid & 127` and `half = tid / 128`; an exhaustive geometry model over 79 batch sizes proved every `(epoch,lane)` is covered exactly once, including odd tails.
 
-The batch-inverse tree keeps the same field arithmetic per candidate. Going from two resident 256-thread CTAs to one 512-thread CTA keeps 16 resident warps per SM under the shared-memory limit while amortizing the expensive root inversion over twice as many leaves. The trade-off is one additional tree level and wider block synchronization; only the official RTX 4090 run can determine the net effect.
+The field arithmetic is unchanged. Two resident 256-thread CTAs and one resident 512-thread CTA both expose 16 resident warps per SM at the shared-memory limit. The 512-thread block shares one expensive root inversion over twice as many candidate leaves, at the cost of one extra tree level and wider synchronization. Only the official RTX 4090 run can establish the throughput effect.
 
-## Shared-memory layout and launch
+## Shared memory and launch plumbing
 
-A direct 512-thread expansion would require 98,304 bytes of static shared memory and ptxas rejects it because the static per-block limit is 48 KiB. The candidate keeps product/inverse arenas at 49,152 bytes static and moves parkA to 49,152 bytes dynamic shared memory. Combined use is 98,304 bytes, below Ada sm_89's 99 KiB per-block shared-memory ceiling.
+A naive 512-thread expansion would require 98,304 bytes of static shared memory. The candidate keeps product/inverse arenas at 49,152 bytes static and moves the 49,152-byte A-tail parking area to dynamic shared memory. Combined use is 98,304 bytes, below Ada sm_89's per-block shared-memory ceiling.
 
-The host sets cudaFuncAttributeMaxDynamicSharedMemorySize and maximum shared-memory carveout for both the JIT digest kernel and native carrier. The carrier launch helper accepts a dynamic-shared byte count and passes it to cudaLaunchKernel; the direct CUDA fallback launches with the same byte count. All digest launch sites reserve the same dynamic arena.
+Both the JIT kernel and native carrier request `cudaFuncAttributeMaxDynamicSharedMemorySize` and maximum carveout. `qsb_carrier_try_smem` forwards the dynamic byte count to `cudaLaunchKernel`; every direct CUDA digest launch passes the same 49,152-byte dynamic arena.
+
+## Preserve the promoted producer working set
+
+Because `QSB_PAIR_MUL` doubles from 4 to 8, leaving `QSB_SE_LAUNCH_BLOCKS` unchanged would silently double one launch from 1,048,576 to 2,097,152 epochs. It would also miss the current exact group-cap specialization and expand the two producer slots from about 1,216 MiB to about 3,344 MiB across epoch descriptors, first-state tables, epoch-group maps and group records.
+
+This candidate therefore defines `QSB_SE_LAUNCH_BLOCKS = (ZLAB_LAUNCH_BLOCKS * 256) / QSB_SE_BLOCK`. For 512 threads that is 131,072 blocks × 8 epochs = 1,048,576 epochs, exactly the promoted capacity. Candidate count per full batch remains 134,217,728. Device code is unchanged by this host-only cadence expression.
 
 ## Synthetic evidence
 
-GitHub Actions run 36511083767 used nvidia/cuda:12.8.1-devel-ubuntu22.04 / nvcc 12.8.93. Both promoted 256-thread control and 512-thread candidate compiled at 127 registers, 0-byte stack, 0 spill stores, 0 spill loads, and 14,480 digest SASS instructions. Candidate resource report shows 49,152 bytes static shared memory.
+GitHub Actions run 36511083767 (CUDA 12.8.93, sm_89) qualified the pure block512 device geometry: control256 and block512 both compile at 127 registers, 0 stack, 0 spill stores/loads and 14,480 digest SASS instructions. Normalized opcode counts were identical.
 
-A normalized cuobjdump opcode census of kernel_digest found zero opcode-count deltas between control256 and synth512. In particular LDS 52/52, STS 36/36, BRA 11/11, BSYNC 17/17, BAR 1/1, SHFL 30/30, IMAD 4754/4754, IADD3 2930/2930 and LOP3 2206/2206. Thus the dynamic-shared relocation did not introduce a static instruction-count penalty in the compiled sm_89 kernel.
+Run 36515423036 qualified the promoted-size batch expression. The digest cubin is byte-identical to the earlier block512 qualification: SHA-256 `45b9b70ff74b1352232086a15231eee30f5303767b4afbe6c205ec8df5ec57b6`, 127 registers, zero stack/spills. Native carrier regeneration and complete host compilation both passed. The regenerated header has source SHA-256 `5f243d87689c5ba789cdf9debc218eb79ba6a8b851081c7b42d4a6a803a60a6d`.
 
-The same run regenerated the native sm_89 carrier and compiled the complete host executable successfully. Carrier cubin SHA-256: 45b9b70ff74b1352232086a15231eee30f5303767b4afbe6c205ec8df5ec57b6. Generated header SHA-256: 9f670ed9a9358142acc86eb7f1f649cabab6a02c8b22fa7f55eb0532620a8c44. The generated header's source SHA-256 was independently recomputed from current .cu/.cuh/.h inputs and matched exactly.
-
-Local deterministic checks: python3 -m unittest harness.test_gpu_wrap passed 6/6; ./setup.sh subset generated the synthetic seed-0 problem and passed the verifier smoke test; git diff --check is clean. No local GPU throughput claim is made.
-
-An independent Python model reproduced the current batch-inverse tree indexing and arithmetic modulo the secp256k1 field for power-of-two leaf counts. Eight seeded random vectors each at n=128, n=256 and n=512 matched independent pow(x,p-2,p) inverses element-for-element. This specifically exercises the additional 512-leaf tree level and the down-tree index mapping; it is an exactness test, not a throughput simulation.
+Independent exactness checks covered the block inverse at n=128/256/512 and the 512-thread epoch/lane tail geometry. `./setup.sh subset`, `python3 -m unittest -v harness.test_gpu_wrap`, and `git diff --check` pass. No local GPU throughput claim is made.
 
 ## Scope and attribution
 
-Only candidates/subset is intended for submission. Protected benchmark, verifier, score calculation, problem generator and Pinning files are unchanged. Exact host verification, hit format and acceptance logic remain inherited from the promoted source. Existing native-carrier/search implementation retains its original licenses and contributor attribution; this candidate adds only the 512-thread/dynamic-shared adaptation described above.
+Only `candidates/subset` is intended for Yukon submission. Harness, verifier, scorer, problem generator and Pinning are unchanged. Exact host verification and hit publication remain inherited. Existing code and contributor attribution are preserved; this candidate contributes the 512-thread/dynamic-shared adaptation plus the host-only batch-capacity normalization above.
 
-The candidate must not be submitted while another BABYDOV Subset submission is active. If the active submission becomes terminal, this package is eligible for one Yukon submission and must never be duplicated unchanged. The official evaluator owns validity, verified score and promotion decision.
+Do not submit this package while another BABYDOV Subset submission is active. If the active submission becomes terminal, refresh the promoted base/current best and public prior art first, then submit this exact package at most once if still applicable.

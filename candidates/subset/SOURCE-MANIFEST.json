@@ -6,7 +6,7 @@
   "effort": "high",
   "harness": "ChatGPT + Remote Desktop Commander + GitHub Actions",
   "carrier_cubin_sha256": "45b9b70ff74b1352232086a15231eee30f5303767b4afbe6c205ec8df5ec57b6",
-  "synthetic_ci_run": "36511083767",
+  "synthetic_ci_run": "36515423036",
   "files": {
     "ASMLAST511-RESEARCH.md": "ea7c302a47588f00406e8bc66d567f3d4f734882d3dfdf73e818b28a365f4ebd",
     "BY_NORMALIZED6.md": "c3ba57bdf16ea0275b68e7bcd912f402b7acb6c9919aa6ae1336f3efaf5c8384",
@@ -33,10 +33,10 @@
     "hit_filter_field.cuh": "b9640d8c4db125f82697ae5bb84182f72c8d22a0dac5567527620dff21659937",
     "hit_filter_field_sc.cuh": "d5b1ac66e1a8f62f17779e39c4244f873080f4864dda9966710c2f5a9f2a6d0e",
     "hit_filter_field_sc_aluz.cuh": "047329878bb74a5ba1e07c00ca1ce1b40a4e96129e9d3016c00dbc7af9fdacb4",
-    "qsb_carrier_sm89.h": "9f670ed9a9358142acc86eb7f1f649cabab6a02c8b22fa7f55eb0532620a8c44",
+    "qsb_carrier_sm89.h": "00c6634e502ac93cccf39a2fadaad0d1cdbe4f6a4a996640a328ae8486755e3c",
     "sha_gate_fma.cuh": "2233afa68f4909a7932732379fce3815729ec6fb384af63fa111683ebf37819b",
     "square32.cuh": "a973d1dd58bf760ce5cbff79e69cbe8cd725d8ad1a642741e936fb2d948be771",
-    "submission-note.md": "5bc45d34a4deca4b7269c146c663c1729edd80dbf0319e8b7307386a5e3bb661",
+    "submission-note.md": "9c941d71a734746feba2856680b09629b7ac6421347e2de808d1a0ea8851f57c",
     "subset.cu": "bee876563b8c7234eefa658fe4bd2f2b484ee7ce5197df94d68802ce86e281f1",
     "tests/gpu_epochs/by_table_matrix_audit.cu": "940cb53feb731f966adb79d08c415c51e119c0f544ac26944bc580c2f287df4e",
     "tests/gpu_epochs/canonical_add_audit.cu": "fd0bb33786a042b6e830428cb464a31e7804a83042bfbb4b92e555d73208728e",
@@ -60,12 +60,14 @@
     "tests/gpu_epochs/qsb_host_verify.h": "3f521f09af243a022a3ee836a2b5559460e70bda9e52e3542a4a3d6f928a7111",
     "tests/gpu_epochs/scalar_audit.cu": "439f21c09c9b4fbf8e199eece7b439774d701f26c955544f9de8f3f7156966c4",
     "tests/gpu_epochs/seed_x3_audit.cu": "a8129be10bcf4435bdfb4fd34c1939a8f7c68a5b98429fd58b0dcb93e23f0764",
-    "tests/gpu_epochs/tree.cu": "ac5cfd936a4a89c05266523a9d8a4f6faa927cb500381b9f9e1f318ac09784ea",
+    "tests/gpu_epochs/tree.cu": "1858a79fe1805b9257751631fed5e799ab3e87cb4ef19ac03b94cdc2e9a4fc3e",
     "tests/gpu_epochs/tree.cu.orig": "811dc0dd3e8b22f70a801c959f24e7c0837a57c586af5c52a3c5ed7d28db12cb",
     "tests/gpu_epochs/tree_audit.cu": "f839ab3f24dca4e49ac4670044b6a2eaeabb2ea0a7e74741df8408ef7104d2de",
     "tests/gpu_epochs/tree_inverse.cuh": "63b9e7e5c67b9c659638505e2dd43250b21569597d612dc2365a41393dc8bdf3",
     "tests/gpu_epochs/window_schedule_shared.cuh": "ad256d03de4ecadf248e091a5ee37a028f1d1b127255044793e1f5ad31125652",
     "tests/gpu_epochs/zinv32.cuh": "b5e6833b34160b7603cf7a952211471dce772c65f79825f96c071f28a8b364d8",
     "y_pair_sc.cuh": "923061f27e02bed6e78c352abdb1285c108650b699bb35668615ae0ef782a4cb"
-  }
+  },
+  "batch_capacity_epochs": 1048576,
+  "batch_capacity_candidates": 134217728
 }
