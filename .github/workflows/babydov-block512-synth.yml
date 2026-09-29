@@ -1,0 +1,92 @@
+name: BABYDOV subset block512 synthetic compile
+
+on:
+  push:
+    branches:
+      - babydov/subset-block512-synth-20260929
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    steps:
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 libssl-dev ca-certificates
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compile promoted control and 512-thread synthetic
+        shell: bash
+        run: |
+          set -u
+          OUT=/tmp/block512
+          BASE=8d07d3ebad41a017dfaa5906b164f883a9b59348
+          mkdir -p "$OUT/base"
+          git archive "$BASE" candidates/subset | tar -x -C "$OUT/base"
+
+          build_one() {
+            local DIR=$1 LABEL=$2
+            cd "$DIR"
+            set +e
+            nvcc -O3 -DQSB_ZEROS_N=24 -DQSB_CARRIER_BUILD=1 -arch=sm_89 -cubin               -Xptxas -v -o "$OUT/$LABEL.cubin" subset.cu               >"$OUT/$LABEL.stdout" 2>"$OUT/$LABEL.ptxas"
+            local RC=$?
+            set -e
+            echo "$RC" > "$OUT/$LABEL.rc"
+            if [ "$RC" -eq 0 ]; then
+              cuobjdump -sass "$OUT/$LABEL.cubin" > "$OUT/$LABEL.sass"
+              cuobjdump -res-usage "$OUT/$LABEL.cubin" > "$OUT/$LABEL.resources" 2>&1 || true
+            fi
+          }
+
+          set -e
+          build_one "$OUT/base/candidates/subset" control256
+          build_one "$GITHUB_WORKSPACE/candidates/subset" synth512
+          test "$(cat "$OUT/control256.rc")" = 0
+      - name: Summarize kernel resources
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,re,pathlib
+          root=pathlib.Path('/tmp/block512')
+          rows=[]
+          for label in ('control256','synth512'):
+              rc=int((root/f'{label}.rc').read_text())
+              ptx=(root/f'{label}.ptxas').read_text(errors='replace')
+              m=re.search(r"Compiling entry function '_Z13kernel_digest[^']*'.*?(?=ptxas info\s*: Compiling entry function|\Z)",ptx,re.S)
+              sec=m.group(0) if m else ''
+              def one(pat, default=None):
+                  x=re.search(pat,sec)
+                  return int(x.group(1)) if x else default
+              sass=(root/f'{label}.sass').read_text(errors='replace') if rc==0 and (root/f'{label}.sass').exists() else ''
+              parts=re.split(r'\n\s*Function : ',sass)
+              dig=next((p for p in parts if p.startswith('_Z13kernel_digest')),'')
+              inst=sum(bool(re.search(r'/\*[0-9a-fA-F]{4,}\*/',ln)) for ln in dig.splitlines())
+              rows.append({
+                  'label':label,'rc':rc,'regs':one(r'Used (\d+) registers'),
+                  'stack':sum(map(int,re.findall(r'(\d+) bytes stack frame',sec))),
+                  'spill_store':sum(map(int,re.findall(r'(\d+) bytes spill stores',sec))),
+                  'spill_load':sum(map(int,re.findall(r'(\d+) bytes spill loads',sec))),
+                  'sass_instructions':inst
+              })
+          (root/'summary.json').write_text(json.dumps(rows,indent=2)+'\n')
+          print(json.dumps(rows,indent=2))
+          PY
+
+      - name: Upload synthetic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qsb-block512-synth
+          retention-days: 7
+          path: /tmp/block512/*

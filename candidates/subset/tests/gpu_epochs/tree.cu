@@ -1731,7 +1731,7 @@ __device__ __forceinline__ int gpu_bench_valid_words(const uint32_t *hs) {
 #ifndef QSB_SE_WINDOWS
 #define QSB_SE_WINDOWS 128
 #endif
-#define QSB_SE_BLOCK   256
+#define QSB_SE_BLOCK   512
 #define QSB_SE_HALVES  (QSB_SE_BLOCK / QSB_SE_WINDOWS)
 #define QSB_SE_PER_EPOCH QSB_SE_WINDOWS
 /* ZLAB_LAUNCH_BLOCKS (kill switch/knob): epochs per launch, promoted 32768. */
@@ -2215,7 +2215,7 @@ __global__ void kernel_verify_pair_hits(
 #endif /* !QSB_HOST_VERIFY */
 
 
-__global__ void __launch_bounds__(256, 2) kernel_digest(
+__global__ void __launch_bounds__(512, 1) kernel_digest(
     const uint8_t * __restrict__ d_combos,       /* batch × T bytes: indices per combo, or NULL for enum mode */
     int n_pool, int t_sel,
     const uint32_t * __restrict__ d_midstate,
@@ -2252,9 +2252,9 @@ __global__ void __launch_bounds__(256, 2) kernel_digest(
     const bool hasA = eA < (unsigned)epochs_in_batch;
     const bool active = idx<batch_size && hasA;
 #if ZLAB_K2S3M
-    __shared__ uint64_t parkA[12][256];       /* (yb-Y),(yb+Y),ZZ of the first candidate */
+    __shared__ uint64_t parkA[12][QSB_SE_BLOCK];       /* (yb-Y),(yb+Y),ZZ of the first candidate */
 #else
-    __shared__ uint64_t parkA[8][256];        /* m1,m2 of the first candidate */
+    __shared__ uint64_t parkA[8][QSB_SE_BLOCK];        /* m1,m2 of the first candidate */
 #endif
     const unsigned eA0 = hasA ? eA : 0u;
     const epoch_desc_t *e0 = d_epochs + eA0;
