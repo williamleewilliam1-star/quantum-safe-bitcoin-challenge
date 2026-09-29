@@ -24,7 +24,7 @@ This candidate therefore defines `QSB_SE_LAUNCH_BLOCKS = (ZLAB_LAUNCH_BLOCKS * 2
 
 GitHub Actions run 36511083767 (CUDA 12.8.93, sm_89) qualified the pure block512 device geometry: control256 and block512 both compile at 127 registers, 0 stack, 0 spill stores/loads and 14,480 digest SASS instructions. Normalized opcode counts were identical.
 
-Run 36515423036 qualified the promoted-size batch expression. The digest cubin is byte-identical to the earlier block512 qualification: SHA-256 `45b9b70ff74b1352232086a15231eee30f5303767b4afbe6c205ec8df5ec57b6`, 127 registers, zero stack/spills. Native carrier regeneration and complete host compilation both passed. The regenerated header has source SHA-256 `5f243d87689c5ba789cdf9debc218eb79ba6a8b851081c7b42d4a6a803a60a6d`.
+Run 36515423036 qualified the promoted-size batch expression. The digest cubin is byte-identical to the earlier block512 qualification: SHA-256 45b9b70ff74b1352232086a15231eee30f5303767b4afbe6c205ec8df5ec57b6, 127 registers, zero stack/spills. Native carrier regeneration and complete host compilation both passed. After adding the host-only contig100 delta, CUDA 12.8.93 run 36527230685 regenerated the exact combined header: source SHA-256 d1fc0b5a64b78c14c80dba2995a095ac3ecd60b181ab76f47655baed7df9cc7b, with the same cubin payload SHA-256 45b9b70ff74b1352232086a15231eee30f5303767b4afbe6c205ec8df5ec57b6.
 
 Independent exactness checks covered the block inverse at n=128/256/512 and the 512-thread epoch/lane tail geometry. `./setup.sh subset`, `python3 -m unittest -v harness.test_gpu_wrap`, and `git diff --check` pass. No local GPU throughput claim is made.
 
