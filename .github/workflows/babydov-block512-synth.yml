@@ -84,6 +84,19 @@ jobs:
           print(json.dumps(rows,indent=2))
           PY
 
+      - name: Regenerate native carrier and compile full host binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=/tmp/block512
+          cd "$GITHUB_WORKSPACE/candidates/subset"
+          NVCC="$(command -v nvcc)" CUOBJDUMP="$(command -v cuobjdump)" ./build_carrier.sh 24 | tee "$OUT/build_carrier.log"
+          sha256sum qsb_carrier_sm89.h | tee "$OUT/carrier_header.sha256"
+          nvcc -O3 -DQSB_ZEROS_N=24 -o "$OUT/subset-full" subset.cu -lcrypto -lm             >"$OUT/full.stdout" 2>"$OUT/full.stderr"
+          test -x "$OUT/subset-full"
+          strings "$OUT/subset-full" | grep -q "Native sm_89 carrier"
+          echo "FULL_BUILD_PASS"
+
       - name: Upload synthetic evidence
         if: always()
         uses: actions/upload-artifact@v4
