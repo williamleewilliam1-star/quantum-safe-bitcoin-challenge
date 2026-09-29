@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 ca-certificates
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 libssl-dev ca-certificates
           rm -rf /var/lib/apt/lists/*
       - name: Checkout
         uses: actions/checkout@v4
