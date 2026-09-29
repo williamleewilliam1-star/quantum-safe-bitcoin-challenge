@@ -28,6 +28,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           OUT=/tmp/qsbcombo
           PROMOTED=8d07d3ebad41a017dfaa5906b164f883a9b59348
           BLOCK512=4b9209ed71641ba254b5daee8dbc3fe7d5fc42a8
