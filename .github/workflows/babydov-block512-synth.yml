@@ -30,6 +30,7 @@ jobs:
         shell: bash
         run: |
           set -u
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           OUT=/tmp/block512
           BASE=8d07d3ebad41a017dfaa5906b164f883a9b59348
           mkdir -p "$OUT/base"
