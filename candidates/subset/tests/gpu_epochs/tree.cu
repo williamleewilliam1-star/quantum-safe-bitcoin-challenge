@@ -1749,7 +1749,7 @@ __device__ __forceinline__ int gpu_bench_valid_words(const uint32_t *hs) {
  * 256-thread promoted => 262144 blocks; 512-thread => 131072 blocks.
  * This preserves the promoted 1,048,576 epochs / 134,217,728 candidates per batch
  * and, critically, keeps all capacity-sized scratch buffers at the promoted VRAM footprint. */
-#define QSB_SE_LAUNCH_BLOCKS ((ZLAB_LAUNCH_BLOCKS * 256u) / QSB_SE_BLOCK)
+#define QSB_SE_LAUNCH_BLOCKS ((ZLAB_LAUNCH_BLOCKS * 256) / QSB_SE_BLOCK)
 
 /* One descriptor per epoch: written by kernel_build_epochs, consumed by one
  * 256-thread block of kernel_digest. mid is the SHA-256 state after

@@ -56,6 +56,7 @@ jobs:
           cd "$GITHUB_WORKSPACE/candidates/subset"
           NVCC="$(command -v nvcc)" CUOBJDUMP="$(command -v cuobjdump)" ./build_carrier.sh 24 | tee "$OUT/build_carrier.log"
           grep -E 'qsb_carrier_(cubin_sha256|source_sha256)' qsb_carrier_sm89.h | tee "$OUT/carrier_hashes.txt"
+          cp qsb_carrier_sm89.h "$OUT/qsb_carrier_sm89.h"
           nvcc -O3 -DQSB_ZEROS_N=24 -o "$OUT/subset-full" subset.cu -lcrypto -lm >"$OUT/full.stdout" 2>"$OUT/full.stderr"
           test -x "$OUT/subset-full"
           echo FULL_BUILD_PASS
