@@ -145,6 +145,18 @@
 #ifndef QSB_CPU_TRY9
 #define QSB_CPU_TRY9 1
 #endif
+#ifndef QSB_CPU_PAT_MINGRP
+#define QSB_CPU_PAT_MINGRP 5
+#endif
+#ifndef QSB_CPU_PAT_ALIGN
+#define QSB_CPU_PAT_ALIGN 4
+#endif
+#ifndef QSB_CPU_EPOCH_CONTIG
+#define QSB_CPU_EPOCH_CONTIG 1
+#endif
+#ifndef QSB_CPU_EPOCH_CAP
+#define QSB_CPU_EPOCH_CAP (~0ull)
+#endif
 #ifndef QSB_CPU_TAB9_FRAC
 #define QSB_CPU_TAB9_FRAC 0.5
 #endif
@@ -1584,7 +1596,7 @@ struct Ctx {
     int cut = 137, early = 6;
     uint64_t mid_bytes = 0;         /* preimage bytes covered by dp->midstate */
     uint64_t n_epochs = 0;
-    uint64_t epoch_base = 0;        /* first epoch of the workers' walk (worker t: base + t, base + t + T, ...) */
+    uint64_t epoch_base = 0;        /* first epoch of the workers' walk (worker t: base + t * span, + 1, ...; QSB_CPU_EPOCH_CONTIG 0: base + t, + T, ...) */
     std::atomic<uint64_t> cand{0};
     std::atomic<uint32_t> hits{0};
     std::mutex io;
@@ -2109,7 +2121,21 @@ static void worker(Ctx *c, int tid) {
     std::vector<uint8_t> skips((size_t)B * 9 + 8);   /* +8: the wide skip stores below overrun by 3 bytes */
     uint8_t pk[64]; memset(pk, 0, 64); pk[33] = 0x80; pk[62] = 0x01; pk[63] = 0x08;   /* 264 bits */
     uint8_t blk2[64]; memset(blk2, 0, 64); blk2[32] = 0x80; blk2[62] = 0x01;          /* 256 bits */
+#if QSB_CPU_EPOCH_CONTIG
+    /* Contiguous epoch ranges (QSB_CPU_EPOCH_CONTIG): worker t walks [base + t*span, base + (t+1)*span) one epoch at a time,
+     * span = the epochs above the base shared out by the workers (about 1.9e8 each at 30 workers, against about 2.6e7 walked in
+     * 1,200 s). Consecutive epochs then differ in the last omission, so the prefix re-hash below costs about 3.4 blocks per epoch
+     * on this problem instead of about 6.1 at stride 30, and each epoch's omissions follow from the previous epoch's without an
+     * unrank. The ranges are disjoint, so no candidate repeats; worker 0 still starts at the base, so the smallest co-grinder hit
+     * still carries the diagnostic code. */
+    const uint64_t eavail = c->n_epochs > c->epoch_base ? c->n_epochs - c->epoch_base : 0;
+    const uint64_t espan = (eavail < (uint64_t)QSB_CPU_EPOCH_CAP ? eavail : (uint64_t)QSB_CPU_EPOCH_CAP) / (uint64_t)(c->nthreads > 0 ? c->nthreads : 1);
+    uint64_t epoch = c->epoch_base + (uint64_t)tid * espan;   /* epoch_base: see QSB_CPU_DIAG_EPOCH */
+    const uint64_t epoch_end = epoch + espan, estep = 1;
+#else
     uint64_t epoch = c->epoch_base + (uint64_t)tid;   /* epoch_base: see QSB_CPU_DIAG_EPOCH */
+    const uint64_t epoch_end = ~0ull, estep = (uint64_t)c->nthreads;
+#endif
     int wi = c->ncwin;
     SHA256_CTX ectx; uint8_t early[16];
     std::vector<uint8_t> pbuf((size_t)dp->n * SIG_PUSH_SIZE + 64);
@@ -2135,7 +2161,7 @@ static void worker(Ctx *c, int tid) {
     if (dp->prefix_remainder_len) memcpy(pfx.data(), dp->prefix_remainder, dp->prefix_remainder_len);
     std::vector<uint32_t> pst((pfx_max / 64 + 2) * 8);
     memcpy(pst.data(), dp->midstate, 32);
-    uint8_t pv_early[16]; bool pv_ok = false;
+    uint8_t pv_early[16]; bool pv_ok = false; uint64_t pv_epoch = 0;
     alignas(16) uint32_t gstb[2][286 + 3][8]; int gpar = 0;   /* this epoch's and the previous epoch's block-0 group states: a lane */
     uint32_t (*gst)[8] = gstb[0];                             /* group of 4 spans at most 2 epochs (ncwin >= 4, see hash_plan) */
     const uint32_t *lin[4];
@@ -2176,10 +2202,18 @@ static void worker(Ctx *c, int tid) {
         int k = 0;
         while (k < B) {
             if (wi == c->ncwin) {                       /* next epoch: hash its fixed prefix once */
-                if (epoch >= c->n_epochs) return;
+                if (epoch >= c->n_epochs || epoch >= epoch_end) return;
 #if QCPU_SHANI
                 if (shani && hplan) {                       /* re-hash the prefix from the first block this epoch changes */
-                    {                                       /* qsb_host_unrank with a binomial table */
+                    int su = -1;                            /* the next epoch in lexicographic order: its omissions from the previous epoch's */
+                    if (QSB_CPU_EPOCH_CONTIG && pv_ok && epoch == pv_epoch + 1) {
+                        su = c->early - 1; while (su >= 0 && pv_early[su] == c->cut - c->early + su) su--;
+                        if (su >= 0) {
+                            memcpy(early, pv_early, (size_t)c->early); early[su]++;
+                            for (int i = su + 1; i < c->early; i++) early[i] = (uint8_t)(early[i - 1] + 1);
+                        }
+                    }
+                    if (su < 0) {                           /* qsb_host_unrank with a binomial table */
                         uint64_t rank = epoch; int lo = 0;
                         for (int i = 0; i < c->early; i++) {
                             int cc = lo;
@@ -2187,6 +2221,7 @@ static void worker(Ctx *c, int tid) {
                             early[i] = (uint8_t)cc; lo = cc + 1;
                         }
                     }
+                    pv_epoch = epoch;
                     const size_t prl = dp->prefix_remainder_len;
                     size_t from = 0, pl = 0; int e2 = 0, i0 = 0;
                     if (pv_ok) {
@@ -2222,7 +2257,7 @@ static void worker(Ctx *c, int tid) {
                         for (int l = 0; l < 4; l++) { memcpy(gst[g + l], est, 32); gp[l] = &gwk[(size_t)(g + l) * 64]; }
                         qsha_x4p(&gst[g], gr, 1);
                     }
-                    epoch += (uint64_t)c->nthreads; wi = 0;
+                    epoch += estep; wi = 0;
                     goto have_epoch;
                 }
 #endif
@@ -2249,7 +2284,7 @@ static void worker(Ctx *c, int tid) {
                     if (ectx.num != remlen || nb > 16) shani = false;   /* unexpected shape: stay on OpenSSL (decided at the first epoch, k = 0) */
                 }
 #endif
-                epoch += (uint64_t)c->nthreads; wi = 0;
+                epoch += estep; wi = 0;
             }
 #if QCPU_SHANI
             have_epoch:
@@ -2481,7 +2516,42 @@ static void start(const digest_params_t *dp, const uint8_t win3[][3], int nwin, 
     c->mid_bytes = dp->total_preimage_len - unpadded;
     c->n_epochs = binom_u64(cut, early);
 #if QCPU_SHANI
-    if (c->shani) hash_plan(*c);
+    if (c->shani) {
+        hash_plan(*c);
+#if QSB_CPU_PAT_MINGRP > 1
+        /* Keep only the CPU patterns whose block-0 group (the first six kept window pushes) has at least QSB_CPU_PAT_MINGRP
+         * members, in whole groups whose total is the largest multiple of 16 (so the 4-lane groups and the 16-lane chunks carry
+         * no padding lanes). The C(13,3) pool splits into block-0 groups of 35 / 6 x 15 / 21 x 5 / 56 x 1; the GPU takes the 35,
+         * the six 15s and 3 of one 5, so the CPU's 158 are 20 x 5 + 1 x 2 + 56 x 1. At 5 the CPU keeps the first 16 of the twenty
+         * 5-groups, 80 patterns: block 0 costs 16/80 = 0.2 compressions per candidate instead of 77/158 = 0.49, and the walk
+         * covers 1.98x more epochs (about 9.5e8 of the 8.2e9 epochs in 1,200 s). The kept patterns are a subset of the
+         * complement of the GPU's, so the candidates stay disjoint; every hit still passes qsb_hv_check. QSB_CPU_PAT_MINGRP=1 (or
+         * QSB_CPU_ALLPAT in the environment, dev) keeps all 158. */
+        if (c->hplan && !getenv("QSB_CPU_ALLPAT")) {
+            int gsz[286] = {0}, order[286], nord = 0; bool seen[286] = {false};
+            for (int i = 0; i < c->ncwin; i++) gsz[c->h_g0[i]]++;
+            for (int i = 0; i < c->ncwin; i++) {
+                const int g = c->h_g0[i];
+                if (!seen[g] && gsz[g] >= QSB_CPU_PAT_MINGRP) { seen[g] = true; order[nord++] = g; }
+            }
+            int tot = 0, ngk = 0;                                  /* the first ngk groups hold a multiple of 16 patterns */
+            for (int k = 0; k < nord; k++) { tot += gsz[order[k]]; if (tot % QSB_CPU_PAT_ALIGN == 0) ngk = k + 1; }
+            bool take[286] = {false};
+            for (int k = 0; k < ngk; k++) take[order[k]] = true;
+            uint8_t keep[286][3]; int nk = 0;
+            for (int i = 0; i < c->ncwin; i++)
+                if (take[c->h_g0[i]]) { keep[nk][0] = c->cwin[i][0]; keep[nk][1] = c->cwin[i][1]; keep[nk][2] = c->cwin[i][2]; nk++; }
+            if (nk >= 16 && nk < c->ncwin) {
+                const int before = c->ncwin, ngb = c->h_ng;
+                memcpy(c->cwin, keep, (size_t)nk * 3); c->ncwin = nk;
+                hash_plan(*c);
+                printf("  CPU co-grind: %d of %d window patterns kept (block-0 groups of >= %d: %d groups, was %d)\n",
+                       nk, before, QSB_CPU_PAT_MINGRP, c->h_ng, ngb);
+                fflush(stdout);
+            }
+        }
+#endif
+    }
 #endif
     if (!qsb_hv_init(&c->hv, dp, (const uint8_t (*)[QSB_SE_TWIN])win3, cut, early)) { printf("  CPU co-grind: off (gate)\n"); delete c; return; }
     EC_GROUP *grp = EC_GROUP_new_by_curve_name(NID_secp256k1);
