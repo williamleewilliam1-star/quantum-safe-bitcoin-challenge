@@ -1,0 +1,35 @@
+name: BABYDOV subset block512 scaled contigonly synthetic
+on:
+  push:
+    branches: [babydov/subset-block512-scaled-contigonly-synth-20260929]
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    container: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install dependencies
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libssl-dev python3 binutils
+      - name: Build exact carrier and full candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=/tmp/contigonly
+          mkdir -p "$OUT"
+          cd candidates/subset
+          NVCC="$(command -v nvcc)" CUOBJDUMP="$(command -v cuobjdump)" ./build_carrier.sh 24 | tee "$OUT/build_carrier.log"
+          grep -q "cubin sha256 45b9b70ff74b1352232086a15231eee30f5303767b4afbe6c205ec8df5ec57b6" qsb_carrier_sm89.h
+          cp qsb_carrier_sm89.h "$OUT/qsb_carrier_sm89.h"
+          nvcc -O3 -DQSB_ZEROS_N=24 -Xptxas=-v -o "$OUT/subset-full" subset.cu -lcrypto -lm >"$OUT/full.stdout" 2>"$OUT/full.stderr"
+          test -x "$OUT/subset-full"
+          echo CONTIGONLY_FULL_BUILD_PASS
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qsb-block512-scaled-contigonly-synth
+          path: /tmp/contigonly

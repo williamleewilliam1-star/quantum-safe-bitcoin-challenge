@@ -146,7 +146,7 @@
 #define QSB_CPU_TRY9 1
 #endif
 #ifndef QSB_CPU_PAT_MINGRP
-#define QSB_CPU_PAT_MINGRP 5
+#define QSB_CPU_PAT_MINGRP 1
 #endif
 #ifndef QSB_CPU_PAT_ALIGN
 #define QSB_CPU_PAT_ALIGN 4
