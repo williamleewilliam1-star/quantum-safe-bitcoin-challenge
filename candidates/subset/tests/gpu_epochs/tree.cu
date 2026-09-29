@@ -2251,11 +2251,11 @@ __global__ void __launch_bounds__(512, 1) kernel_digest(
     const unsigned eA = (unsigned)QSB_PAIR_MUL*blockIdx.x + 2u*(unsigned)half;
     const bool hasA = eA < (unsigned)epochs_in_batch;
     const bool active = idx<batch_size && hasA;
-#if ZLAB_K2S3M
-    __shared__ uint64_t parkA[12][QSB_SE_BLOCK];       /* (yb-Y),(yb+Y),ZZ of the first candidate */
-#else
-    __shared__ uint64_t parkA[8][QSB_SE_BLOCK];        /* m1,m2 of the first candidate */
-#endif
+/* 512-thread synthetic: keep the inverse arenas at the 48 KiB static ceiling
+     * and place the A-tail parking region in dynamic shared memory. */
+    extern __shared__ uint64_t qsb_digest_dynamic[];
+    uint64_t (*parkA)[QSB_SE_BLOCK] =
+        reinterpret_cast<uint64_t (*)[QSB_SE_BLOCK]>(qsb_digest_dynamic);
     const unsigned eA0 = hasA ? eA : 0u;
     const epoch_desc_t *e0 = d_epochs + eA0;
     const bool hasB = eA+1u < (unsigned)epochs_in_batch;
