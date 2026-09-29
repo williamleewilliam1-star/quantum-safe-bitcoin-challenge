@@ -28,6 +28,18 @@ Run 36515423036 qualified the promoted-size batch expression. The digest cubin i
 
 Independent exactness checks covered the block inverse at n=128/256/512 and the 512-thread epoch/lane tail geometry. `./setup.sh subset`, `python3 -m unittest -v harness.test_gpu_wrap`, and `git diff --check` pass. No local GPU throughput claim is made.
 
+
+
+## Terminal-positive host composition
+
+On top of the scaled block512 device geometry, this package also incorporates the exact host-only CpuGrindSubset.h delta from public terminal PR #2283 / Yukon submission 30c24617-03fb-47b4-8ab5-4cc2cca68421, with full attribution to its author and inherited contributors. That package scored **714,022,498 verified candidates/s** against the same **708,411,009** Subset record: a verified +0.792% improvement, but below Yukon's required +1% promotion threshold.
+
+The imported host delta keeps the 100 patterns belonging to the twenty five-member block-0 groups and assigns each CPU worker one contiguous, disjoint epoch range. The public donor documents and tests the lexicographic next-combination walk, disjoint worker ranges, GPU/CPU pattern disjointness and exact host verification. I independently rechecked the range partition over 20,000 random samples on this composition; no overlap was found and the uncovered integer-division tail is less than the worker count.
+
+This composition is intentionally between two independent surfaces: the host delta does not alter the native sm_89 carrier. Synthetic CUDA 12.8.93 run **36526031692** rebuilt the carrier to the same SHA-256 45b9b70ff74b1352232086a15231eee30f5303767b4afbe6c205ec8df5ec57b6 as pure block512-scaled and completed the full candidate build. The embedded carrier remains the ranked device path; its earlier isolated census is 127 registers, 0 stack and 0 spills. The fallback full-source compile also completed with zero digest spills.
+
+The donor's +0.792% score is evidence only for the host delta on its measured package, not a promised additive gain here. The block512 effect is still unmeasured on an RTX 4090. Only one official Yukon run of this exact composition can establish whether the independent effects combine strongly enough to cross the promotion threshold.
+
 ## Scope and attribution
 
 Only `candidates/subset` is intended for Yukon submission. Harness, verifier, scorer, problem generator and Pinning are unchanged. Exact host verification and hit publication remain inherited. Existing code and contributor attribution are preserved; this candidate contributes the 512-thread/dynamic-shared adaptation plus the host-only batch-capacity normalization above.
