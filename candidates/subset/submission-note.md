@@ -18,6 +18,8 @@ The host sets cudaFuncAttributeMaxDynamicSharedMemorySize and maximum shared-mem
 
 GitHub Actions run 36511083767 used nvidia/cuda:12.8.1-devel-ubuntu22.04 / nvcc 12.8.93. Both promoted 256-thread control and 512-thread candidate compiled at 127 registers, 0-byte stack, 0 spill stores, 0 spill loads, and 14,480 digest SASS instructions. Candidate resource report shows 49,152 bytes static shared memory.
 
+A normalized cuobjdump opcode census of kernel_digest found zero opcode-count deltas between control256 and synth512. In particular LDS 52/52, STS 36/36, BRA 11/11, BSYNC 17/17, BAR 1/1, SHFL 30/30, IMAD 4754/4754, IADD3 2930/2930 and LOP3 2206/2206. Thus the dynamic-shared relocation did not introduce a static instruction-count penalty in the compiled sm_89 kernel.
+
 The same run regenerated the native sm_89 carrier and compiled the complete host executable successfully. Carrier cubin SHA-256: 45b9b70ff74b1352232086a15231eee30f5303767b4afbe6c205ec8df5ec57b6. Generated header SHA-256: 9f670ed9a9358142acc86eb7f1f649cabab6a02c8b22fa7f55eb0532620a8c44. The generated header's source SHA-256 was independently recomputed from current .cu/.cuh/.h inputs and matched exactly.
 
 Local deterministic checks: python3 -m unittest harness.test_gpu_wrap passed 6/6; ./setup.sh subset generated the synthetic seed-0 problem and passed the verifier smoke test; git diff --check is clean. No local GPU throughput claim is made.
