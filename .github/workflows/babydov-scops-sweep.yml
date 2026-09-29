@@ -1,0 +1,90 @@
+name: BABYDOV subset SC_OPS register sweep
+
+on:
+  push:
+    branches:
+      - babydov/subset-aluz-sweep-20260929
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    steps:
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 libssl-dev ca-certificates
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Checkout branch
+        uses: actions/checkout@v4
+
+      - name: Compile all valid SC_OPS masks
+        working-directory: candidates/subset
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p /tmp/scops
+          nvcc --version > /tmp/scops/nvcc-version.txt
+          python3 - <<'PY' > /tmp/scops/masks.txt
+          bits=(1,4,8,16,32)
+          vals=[]
+          for m in range(128):
+              if m & ~(sum(bits)): continue
+              vals.append(m)
+          print(' '.join(map(str,vals)))
+          PY
+          for M in $(cat /tmp/scops/masks.txt); do
+            nvcc -O3 -DQSB_ZEROS_N=24 -DQSB_CARRIER_BUILD=1 -DQSB_SC_OPS=$M -arch=sm_89 -cubin               -Xptxas -v -o /tmp/scops/m$M.cubin subset.cu 2> /tmp/scops/m$M.ptxas
+            cuobjdump -sass /tmp/scops/m$M.cubin > /tmp/scops/m$M.sass
+          done
+
+      - name: Rank masks
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,re,pathlib
+          root=pathlib.Path('/tmp/scops')
+          vals=list(map(int,(root/'masks.txt').read_text().split()))
+          rows=[]
+          for m in vals:
+              ptx=(root/f'm{m}.ptxas').read_text(errors='replace')
+              sass=(root/f'm{m}.sass').read_text(errors='replace')
+              pm=re.search(r"Compiling entry function '_Z13kernel_digest[^']*'.*?(?=ptxas info\s*: Compiling entry function|\Z)",ptx,re.S)
+              dp=pm.group(0) if pm else ''
+              regs=int(re.search(r'Used (\d+) registers',dp).group(1)) if re.search(r'Used (\d+) registers',dp) else 999
+              spillS=sum(map(int,re.findall(r'(\d+) bytes spill stores',dp)))
+              spillL=sum(map(int,re.findall(r'(\d+) bytes spill loads',dp)))
+              stack=sum(map(int,re.findall(r'(\d+) bytes stack frame',dp)))
+              parts=re.split(r'\n\s*Function : ',sass)
+              dig=next((p for p in parts if p.startswith('_Z13kernel_digest')),'')
+              inst=[ln for ln in dig.splitlines() if re.search(r'/\*[0-9a-fA-F]{4,}\*/',ln)]
+              def n(p): return sum(bool(re.search(p,x)) for x in inst)
+              rows.append({'mask':m,'regs':regs,'spillS':spillS,'spillL':spillL,'stack':stack,
+                           'instructions':len(inst),'IMAD':n(r'\bIMAD'),'IMAD_X':n(r'\bIMAD\.X'),
+                           'IADD3':n(r'\bIADD3'),'MOV':n(r'\bMOV')})
+          base=next(x for x in rows if x['mask']==0)
+          for x in rows:
+              x['delta_inst']=x['instructions']-base['instructions']
+              x['delta_imad']=x['IMAD']-base['IMAD']
+              x['delta_mov']=x['MOV']-base['MOV']
+          rows.sort(key=lambda x:(x['spillS']+x['spillL'],x['stack'],x['regs'],x['instructions'],x['IMAD']))
+          (root/'ranked.json').write_text(json.dumps(rows,indent=2)+'\n')
+          hdr='mask regs spillS spillL stack inst dInst IMAD dIMAD IADD3 MOV dMOV'
+          lines=[hdr]+[f"{x['mask']} {x['regs']} {x['spillS']} {x['spillL']} {x['stack']} {x['instructions']} {x['delta_inst']} {x['IMAD']} {x['delta_imad']} {x['IADD3']} {x['MOV']} {x['delta_mov']}" for x in rows]
+          (root/'ranked.txt').write_text('\n'.join(lines)+'\n')
+          print('\n'.join(lines[:33]))
+          PY
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: qsb-subset-scops-sweep
+          retention-days: 7
+          path: /tmp/scops/*
