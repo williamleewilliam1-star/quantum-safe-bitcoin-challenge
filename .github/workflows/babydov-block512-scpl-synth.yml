@@ -1,0 +1,95 @@
+name: BABYDOV block512 + SC_PP/LATE synthetic
+
+on:
+  push:
+    branches:
+      - babydov/subset-block512-scpl-synth-20260929
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 libssl-dev ca-certificates
+          rm -rf /var/lib/apt/lists/*
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compile promoted, block512, and composition
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=/tmp/qsbcombo
+          PROMOTED=8d07d3ebad41a017dfaa5906b164f883a9b59348
+          BLOCK512=4b9209ed71641ba254b5daee8dbc3fe7d5fc42a8
+          mkdir -p "$OUT/promoted" "$OUT/block512"
+          git archive "$PROMOTED" candidates/subset | tar -x -C "$OUT/promoted"
+          git archive "$BLOCK512" candidates/subset | tar -x -C "$OUT/block512"
+          build_one() {
+            local dir=$1 label=$2
+            cd "$dir"
+            nvcc -O3 -DQSB_ZEROS_N=24 -DQSB_CARRIER_BUILD=1 -arch=sm_89 -cubin -Xptxas -v \
+              -o "$OUT/$label.cubin" subset.cu >"$OUT/$label.stdout" 2>"$OUT/$label.ptxas"
+            cuobjdump -sass "$OUT/$label.cubin" > "$OUT/$label.sass"
+          }
+          build_one "$OUT/promoted/candidates/subset" promoted256
+          build_one "$OUT/block512/candidates/subset" block512
+          build_one "$GITHUB_WORKSPACE/candidates/subset" combo512_scpl
+      - name: Summarize resources and opcode census
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,re,pathlib,collections
+          root=pathlib.Path('/tmp/qsbcombo')
+          out=[]
+          for label in ('promoted256','block512','combo512_scpl'):
+              ptx=(root/f'{label}.ptxas').read_text(errors='replace')
+              m=re.search(r"Compiling entry function '_Z13kernel_digest[^']*'.*?(?=ptxas info\s*: Compiling entry function|\Z)",ptx,re.S)
+              sec=m.group(0) if m else ''
+              def nums(p): return [int(x) for x in re.findall(p,sec)]
+              regs=(nums(r'Used (\d+) registers') or [None])[0]
+              stack=sum(nums(r'(\d+) bytes stack frame'))
+              ss=sum(nums(r'(\d+) bytes spill stores'))
+              sl=sum(nums(r'(\d+) bytes spill loads'))
+              sass=(root/f'{label}.sass').read_text(errors='replace')
+              parts=re.split(r'\n\s*Function : ',sass)
+              dig=next((p for p in parts if p.startswith('_Z13kernel_digest')),'')
+              ops=collections.Counter()
+              inst=0
+              for ln in dig.splitlines():
+                  if re.search(r'/\*[0-9a-fA-F]{4,}\*/',ln):
+                      inst+=1
+                      mm=re.search(r'\}\s*([A-Z][A-Z0-9_.]*)|\*/\s*([A-Z][A-Z0-9_.]*)',ln)
+                      if mm: ops[(mm.group(1) or mm.group(2)).split('.')[0]]+=1
+              out.append({'label':label,'regs':regs,'stack':stack,'spill_store':ss,'spill_load':sl,'sass_instructions':inst,
+                          'IMAD':ops['IMAD'],'IADD3':ops['IADD3'],'MOV':ops['MOV'],'LDS':ops['LDS'],'STS':ops['STS'],'BAR':ops['BAR']})
+          (root/'summary.json').write_text(json.dumps(out,indent=2)+'\n')
+          print(json.dumps(out,indent=2))
+          PY
+      - name: Regenerate carrier and compile full host
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=/tmp/qsbcombo
+          cd "$GITHUB_WORKSPACE/candidates/subset"
+          NVCC="$(command -v nvcc)" CUOBJDUMP="$(command -v cuobjdump)" ./build_carrier.sh 24 | tee "$OUT/build_carrier.log"
+          sha256sum qsb_carrier_sm89.h | tee "$OUT/carrier_header.sha256"
+          nvcc -O3 -DQSB_ZEROS_N=24 -o "$OUT/subset-full" subset.cu -lcrypto -lm >"$OUT/full.stdout" 2>"$OUT/full.stderr"
+          test -x "$OUT/subset-full"
+          echo FULL_BUILD_PASS
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qsb-block512-scpl-synth
+          retention-days: 7
+          path: /tmp/qsbcombo/*
