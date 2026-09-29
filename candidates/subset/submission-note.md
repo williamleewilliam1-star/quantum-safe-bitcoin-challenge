@@ -34,7 +34,7 @@ Independent exactness checks covered the block inverse at n=128/256/512 and the 
 
 On top of the scaled block512 device geometry, this package also incorporates the exact host-only CpuGrindSubset.h delta from public terminal PR #2283 / Yukon submission 30c24617-03fb-47b4-8ab5-4cc2cca68421, with full attribution to its author and inherited contributors. That package scored **714,022,498 verified candidates/s** against the same **708,411,009** Subset record: a verified +0.792% improvement, but below Yukon's required +1% promotion threshold.
 
-The imported host delta keeps the 100 patterns belonging to the twenty five-member block-0 groups and assigns each CPU worker one contiguous, disjoint epoch range. The public donor documents and tests the lexicographic next-combination walk, disjoint worker ranges, GPU/CPU pattern disjointness and exact host verification. I independently rechecked the range partition over 20,000 random samples on this composition; no overlap was found and the uncovered integer-division tail is less than the worker count.
+The imported host delta keeps all 158 promoted CPU patterns and assigns each CPU worker one contiguous, disjoint epoch range. The public donor documents and tests the lexicographic next-combination walk, disjoint worker ranges, GPU/CPU pattern disjointness and exact host verification. I independently rechecked the range partition over 20,000 random samples on this composition; no overlap was found and the uncovered integer-division tail is less than the worker count.
 
 This composition is intentionally between two independent surfaces: the host delta does not alter the native sm_89 carrier. Synthetic CUDA 12.8.93 run **36526031692** rebuilt the carrier to the same SHA-256 45b9b70ff74b1352232086a15231eee30f5303767b4afbe6c205ec8df5ec57b6 as pure block512-scaled and completed the full candidate build. The embedded carrier remains the ranked device path; its earlier isolated census is 127 registers, 0 stack and 0 spills. The fallback full-source compile also completed with zero digest spills.
 
@@ -45,3 +45,8 @@ The donor's +0.792% score is evidence only for the host delta on its measured pa
 Only `candidates/subset` is intended for Yukon submission. Harness, verifier, scorer, problem generator and Pinning are unchanged. Exact host verification and hit publication remain inherited. Existing code and contributor attribution are preserved; this candidate contributes the 512-thread/dynamic-shared adaptation plus the host-only batch-capacity normalization above.
 
 Do not submit this package while another BABYDOV Subset submission is active. If the active submission becomes terminal, refresh the promoted base/current best and public prior art first, then submit this exact package at most once if still applicable.
+
+
+## Contiguous-only reserve qualification
+
+For this reserve, QSB_CPU_PAT_MINGRP defaults to 1, so the block-0 pattern-selection code is compile-time inactive and all 158 promoted CPU patterns remain. CUDA 12.8.93 fork run 36527833923 rebuilt the exact source tree, completed the full candidate compile, and regenerated the native sm_89 carrier. Carrier cubin SHA-256 remains 45b9b70ff74b1352232086a15231eee30f5303767b4afbe6c205ec8df5ec57b6; exact combined source SHA-256 is bc8764a98b71f4fc69f6f97b01030a1348bcf005929b4108fc4608c9825bd67c. This reserve is not submitted while PR #2326 is active.
