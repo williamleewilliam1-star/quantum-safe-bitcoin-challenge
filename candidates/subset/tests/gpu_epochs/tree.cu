@@ -1731,7 +1731,13 @@ __device__ __forceinline__ int gpu_bench_valid_words(const uint32_t *hs) {
 #ifndef QSB_SE_WINDOWS
 #define QSB_SE_WINDOWS 128
 #endif
-#define QSB_SE_BLOCK   256
+#define QSB_SE_BLOCK   512
+#if ZLAB_K2S3M
+#define QSB_DIGEST_PARK_ROWS 12
+#else
+#define QSB_DIGEST_PARK_ROWS 8
+#endif
+#define QSB_DIGEST_DYN_SMEM_BYTES ((size_t)QSB_DIGEST_PARK_ROWS * (size_t)QSB_SE_BLOCK * sizeof(uint64_t))
 #define QSB_SE_HALVES  (QSB_SE_BLOCK / QSB_SE_WINDOWS)
 #define QSB_SE_PER_EPOCH QSB_SE_WINDOWS
 /* ZLAB_LAUNCH_BLOCKS (kill switch/knob): epochs per launch, promoted 32768. */
@@ -2215,7 +2221,7 @@ __global__ void kernel_verify_pair_hits(
 #endif /* !QSB_HOST_VERIFY */
 
 
-__global__ void __launch_bounds__(256, 2) kernel_digest(
+__global__ void __launch_bounds__(512, 1) kernel_digest(
     const uint8_t * __restrict__ d_combos,       /* batch × T bytes: indices per combo, or NULL for enum mode */
     int n_pool, int t_sel,
     const uint32_t * __restrict__ d_midstate,
@@ -2251,11 +2257,11 @@ __global__ void __launch_bounds__(256, 2) kernel_digest(
     const unsigned eA = (unsigned)QSB_PAIR_MUL*blockIdx.x + 2u*(unsigned)half;
     const bool hasA = eA < (unsigned)epochs_in_batch;
     const bool active = idx<batch_size && hasA;
-#if ZLAB_K2S3M
-    __shared__ uint64_t parkA[12][256];       /* (yb-Y),(yb+Y),ZZ of the first candidate */
-#else
-    __shared__ uint64_t parkA[8][256];        /* m1,m2 of the first candidate */
-#endif
+/* 512-thread synthetic: keep the inverse arenas at the 48 KiB static ceiling
+     * and place the A-tail parking region in dynamic shared memory. */
+    extern __shared__ uint64_t qsb_digest_dynamic[];
+    uint64_t (*parkA)[QSB_SE_BLOCK] =
+        reinterpret_cast<uint64_t (*)[QSB_SE_BLOCK]>(qsb_digest_dynamic);
     const unsigned eA0 = hasA ? eA : 0u;
     const epoch_desc_t *e0 = d_epochs + eA0;
     const bool hasB = eA+1u < (unsigned)epochs_in_batch;
@@ -4613,6 +4619,14 @@ int main(int argc, char **argv) {
      * JIT-compile the compute_52 image; see QsbCarrier.h, no-JIT startup). */
     g_qsb_jit_hook = [] {
         cudaError_t rc = cudaFuncSetAttribute(
+            kernel_digest, cudaFuncAttributeMaxDynamicSharedMemorySize,
+            (int)QSB_DIGEST_DYN_SMEM_BYTES);
+        if (rc != cudaSuccess) {
+            fprintf(stderr, "WARN: digest dynamic-shared opt-in unavailable: %s\n",
+                    cudaGetErrorString(rc));
+            (void)cudaGetLastError();
+        }
+        rc = cudaFuncSetAttribute(
             kernel_digest, cudaFuncAttributePreferredSharedMemoryCarveout,
             cudaSharedmemCarveoutMaxShared);
         if (rc != cudaSuccess) {
@@ -4623,9 +4637,12 @@ int main(int argc, char **argv) {
     };
     if (!g_qsb_carrier.on) g_qsb_jit_hook();
     cudaError_t qsb_carveout_rc = cudaSuccess;
-    if (qsb_carrier_has(QK_DIG)) {   /* the same hint on the native image's digest kernel */
+    if (qsb_carrier_has(QK_DIG)) {   /* the same hints on the native image's digest kernel */
         qsb_carveout_rc = cudaFuncSetAttribute((const void *)g_qsb_carrier.k[QK_DIG],
-            cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared);
+            cudaFuncAttributeMaxDynamicSharedMemorySize, (int)QSB_DIGEST_DYN_SMEM_BYTES);
+        if (qsb_carveout_rc == cudaSuccess)
+            qsb_carveout_rc = cudaFuncSetAttribute((const void *)g_qsb_carrier.k[QK_DIG],
+                cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared);
         if (qsb_carveout_rc != cudaSuccess) {
             fprintf(stderr, "WARN: carrier digest shared-memory carveout hint unavailable: %s\n",
                     cudaGetErrorString(qsb_carveout_rc));
@@ -4933,7 +4950,7 @@ int main(int argc, char **argv) {
                 qhp::enqueue_check_copy(st, d_ep, d_fi, (size_t)QSB_FIRST_SLOTS * 8 * sizeof(uint32_t));
 #endif
             }
-            if (!qsb_carrier_try(kernel_digest, QK_DIG, dim3(nblk), dim3(QSB_SE_BLOCK), st,
+            if (!qsb_carrier_try_smem(kernel_digest, QK_DIG, dim3(nblk), dim3(QSB_SE_BLOCK), st, QSB_DIGEST_DYN_SMEM_BYTES,
                 (const uint8_t*)NULL, n_pool, t_sel,
                 d_mid,
                 d_prem, 0,
@@ -4947,7 +4964,7 @@ int main(int argc, char **argv) {
                 d_hit_qx, d_hit_qy,
                 batch_pos, easy, single_hash, calibrate, window_start, (uint64_t)0,
                 t_win, s_early, d_early, fast_inc, d_const_words, d_ep, d_fi, epochs_in_batch))
-            kernel_digest<<<nblk, QSB_SE_BLOCK, 0, st>>>(
+            kernel_digest<<<nblk, QSB_SE_BLOCK, QSB_DIGEST_DYN_SMEM_BYTES, st>>>(
                 (const uint8_t*)NULL, n_pool, t_sel,
                 d_mid,
                 d_prem, 0,
@@ -5089,7 +5106,7 @@ int main(int argc, char **argv) {
             // One producer block for each valid epoch, including an odd tail.
             { const unsigned nthr=(unsigned)epochs_in_batch*(unsigned)qsb_first_class_count;
               kernel_build_first_flat<<<(nthr+255)/256,256>>>(d_epochs,d_first,(unsigned)epochs_in_batch,(unsigned)qsb_first_class_count); }
-            kernel_digest<<<nblk, QSB_SE_BLOCK>>>(
+            kernel_digest<<<nblk, QSB_SE_BLOCK, QSB_DIGEST_DYN_SMEM_BYTES>>>(
                 (const uint8_t*)NULL, n_pool, t_sel,
                 d_mid,
                 d_prem, 0,
@@ -5358,7 +5375,7 @@ int main(int argc, char **argv) {
             if(qsb_prefix_eligible(n_pool,window_start,t_win,fast_inc,prem_len_now))
                 qsb_prepare_prefix_cache<<<(QSB_PREFIX_ENTRIES+255)/256,256>>>(d_mid,window_start,t_win);
 #endif
-            kernel_digest<<<grdsz, BLKSZ>>>(
+            kernel_digest<<<grdsz, BLKSZ, QSB_DIGEST_DYN_SMEM_BYTES>>>(
                 (const uint8_t*)NULL, n_pool, t_sel,
                 d_mid,
                 d_prem, prem_len_now,
@@ -5560,7 +5577,7 @@ int main(int argc, char **argv) {
             cudaMemcpy(d_hit_cnt, &h_hit, 4, cudaMemcpyHostToDevice);
 
             int grdsz = (batch_pos + BLKSZ - 1) / BLKSZ;
-            kernel_digest<<<grdsz, BLKSZ>>>(
+            kernel_digest<<<grdsz, BLKSZ, QSB_DIGEST_DYN_SMEM_BYTES>>>(
                 d_combos, n_pool, t_sel,
                 d_mid,
                 d_prem, (int)dp.prefix_remainder_len,
