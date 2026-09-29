@@ -1,0 +1,84 @@
+name: BABYDOV subset SC_OPS28 plus EPOCH_SHA_PAIR A/B
+
+on:
+  push:
+    branches:
+      - babydov/subset-epoch-sha-pair-lab
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  combo:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    steps:
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 libssl-dev ca-certificates
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Checkout experiment branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compile SC_OPS28 control and epoch-paired variant
+        working-directory: candidates/subset
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p /tmp/combo
+          nvcc --version | tee /tmp/combo/nvcc-version.txt
+          for E in 0 1; do
+            nvcc -O3 -DQSB_ZEROS_N=24 -DQSB_CARRIER_BUILD=1 -DQSB_SC_OPS=28 -DQSB_EPOCH_SHA_PAIR=$E -arch=sm_89 -cubin               -Xptxas -v -o /tmp/combo/e$E.cubin subset.cu 2> /tmp/combo/e$E.ptxas
+            cuobjdump -sass /tmp/combo/e$E.cubin > /tmp/combo/e$E.sass
+            sha256sum /tmp/combo/e$E.cubin > /tmp/combo/e$E.sha256
+          done
+
+      - name: Summarize interaction
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,re,pathlib
+          root=pathlib.Path('/tmp/combo')
+          out={}
+          for e in (0,1):
+              ptx=(root/f'e{e}.ptxas').read_text(errors='replace')
+              sass=(root/f'e{e}.sass').read_text(errors='replace')
+              pm=re.search(r"Compiling entry function '_Z13kernel_digest[^']*'.*?(?=ptxas info\s*: Compiling entry function|\Z)",ptx,re.S)
+              dp=pm.group(0) if pm else ''
+              mr=re.search(r'Used (\d+) registers',dp)
+              regs=int(mr.group(1)) if mr else 999
+              spillS=sum(map(int,re.findall(r'(\d+) bytes spill stores',dp)))
+              spillL=sum(map(int,re.findall(r'(\d+) bytes spill loads',dp)))
+              stack=sum(map(int,re.findall(r'(\d+) bytes stack frame',dp)))
+              parts=re.split(r'\n\s*Function : ',sass)
+              dig=next((p for p in parts if p.startswith('_Z13kernel_digest')),'')
+              inst=[ln for ln in dig.splitlines() if re.search(r'/\*[0-9a-fA-F]{4,}\*/',ln)]
+              def n(p): return sum(bool(re.search(p,x)) for x in inst)
+              out[str(e)]={'registers':regs,'spillS':spillS,'spillL':spillL,'stack':stack,
+                           'instructions':len(inst),'IMAD':n(r'\bIMAD'),'IMAD_IADD':n(r'\bIMAD\.IADD'),
+                           'IADD3':n(r'\bIADD3'),'SHF':n(r'\bSHF'),'LOP3':n(r'\bLOP3'),'MOV':n(r'\bMOV'),
+                           'cubin_bytes':(root/f'e{e}.cubin').stat().st_size}
+          b,c=out['0'],out['1']
+          delta={k:c[k]-b[k] for k in c}
+          result={'scops28_epoch0':b,'scops28_epoch1':c,'delta':delta}
+          (root/'summary.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,indent=2))
+          if c['spillS'] or c['spillL'] or c['stack']:
+              raise SystemExit('combo introduced spill/stack')
+          if c['registers'] > 128:
+              raise SystemExit('combo exceeds 128-register target')
+          PY
+
+      - name: Upload interaction artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: qsb-scops28-epoch-sha-pair-ab
+          retention-days: 7
+          path: /tmp/combo/*
