@@ -92,9 +92,10 @@ jobs:
           cd "$GITHUB_WORKSPACE/candidates/subset"
           NVCC="$(command -v nvcc)" CUOBJDUMP="$(command -v cuobjdump)" ./build_carrier.sh 24 | tee "$OUT/build_carrier.log"
           sha256sum qsb_carrier_sm89.h | tee "$OUT/carrier_header.sha256"
+          cp qsb_carrier_sm89.h "$OUT/qsb_carrier_sm89.h"
           nvcc -O3 -DQSB_ZEROS_N=24 -o "$OUT/subset-full" subset.cu -lcrypto -lm             >"$OUT/full.stdout" 2>"$OUT/full.stderr"
           test -x "$OUT/subset-full"
-          strings "$OUT/subset-full" | grep -q "Native sm_89 carrier"
+          grep -a -m1 -q "Native sm_89 carrier" "$OUT/subset-full"
           echo "FULL_BUILD_PASS"
 
       - name: Upload synthetic evidence
