@@ -1744,7 +1744,12 @@ __device__ __forceinline__ int gpu_bench_valid_words(const uint32_t *hs) {
 #ifndef ZLAB_LAUNCH_BLOCKS
 #define ZLAB_LAUNCH_BLOCKS 262144  /* Match PR309: 134217728 paired candidates per full launch. */
 #endif
-#define QSB_SE_LAUNCH_BLOCKS ZLAB_LAUNCH_BLOCKS   /* x 256 threads = 8M candidates/launch */
+/* Keep the per-launch epoch/candidate capacity constant as block geometry changes.
+ * QSB_PAIR_MUL grows linearly with QSB_SE_BLOCK, so scale launch blocks inversely:
+ * 256-thread promoted => 262144 blocks; 512-thread => 131072 blocks.
+ * This preserves the promoted 1,048,576 epochs / 134,217,728 candidates per batch
+ * and, critically, keeps all capacity-sized scratch buffers at the promoted VRAM footprint. */
+#define QSB_SE_LAUNCH_BLOCKS ((ZLAB_LAUNCH_BLOCKS * 256u) / QSB_SE_BLOCK)
 
 /* One descriptor per epoch: written by kernel_build_epochs, consumed by one
  * 256-thread block of kernel_digest. mid is the SHA-256 state after
