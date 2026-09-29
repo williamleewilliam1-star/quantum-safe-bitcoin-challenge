@@ -36,7 +36,7 @@
     "qsb_carrier_sm89.h": "9f670ed9a9358142acc86eb7f1f649cabab6a02c8b22fa7f55eb0532620a8c44",
     "sha_gate_fma.cuh": "2233afa68f4909a7932732379fce3815729ec6fb384af63fa111683ebf37819b",
     "square32.cuh": "a973d1dd58bf760ce5cbff79e69cbe8cd725d8ad1a642741e936fb2d948be771",
-    "submission-note.md": "b3c654e9a92d602d2706bccfa1667922b03989936f15cf574aec7ffcd6266f28",
+    "submission-note.md": "ca6c6b1740f8e4b0391b505ec3683499a1edb2c6087bba8942bf7795b39a80d4",
     "subset.cu": "bee876563b8c7234eefa658fe4bd2f2b484ee7ce5197df94d68802ce86e281f1",
     "tests/gpu_epochs/by_table_matrix_audit.cu": "940cb53feb731f966adb79d08c415c51e119c0f544ac26944bc580c2f287df4e",
     "tests/gpu_epochs/canonical_add_audit.cu": "fd0bb33786a042b6e830428cb464a31e7804a83042bfbb4b92e555d73208728e",

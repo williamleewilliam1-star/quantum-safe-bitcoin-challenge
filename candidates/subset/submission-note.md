@@ -22,6 +22,8 @@ The same run regenerated the native sm_89 carrier and compiled the complete host
 
 Local deterministic checks: python3 -m unittest harness.test_gpu_wrap passed 6/6; ./setup.sh subset generated the synthetic seed-0 problem and passed the verifier smoke test; git diff --check is clean. No local GPU throughput claim is made.
 
+An independent Python model reproduced the current batch-inverse tree indexing and arithmetic modulo the secp256k1 field for power-of-two leaf counts. Eight seeded random vectors each at n=128, n=256 and n=512 matched independent pow(x,p-2,p) inverses element-for-element. This specifically exercises the additional 512-leaf tree level and the down-tree index mapping; it is an exactness test, not a throughput simulation.
+
 ## Scope and attribution
 
 Only candidates/subset is intended for submission. Protected benchmark, verifier, score calculation, problem generator and Pinning files are unchanged. Exact host verification, hit format and acceptance logic remain inherited from the promoted source. Existing native-carrier/search implementation retains its original licenses and contributor attribution; this candidate adds only the 512-thread/dynamic-shared adaptation described above.
