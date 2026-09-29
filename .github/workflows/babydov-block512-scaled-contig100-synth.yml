@@ -24,6 +24,7 @@ jobs:
           NVCC="$(command -v nvcc)" CUOBJDUMP="$(command -v cuobjdump)" ./build_carrier.sh 24 | tee "$OUT/build_carrier.log"
           grep -m1 'cubin sha256' qsb_carrier_sm89.h | tee "$OUT/carrier_stamp.txt"
           grep -q 'cubin sha256 45b9b70ff74b1352232086a15231eee30f5303767b4afbe6c205ec8df5ec57b6' qsb_carrier_sm89.h
+          cp qsb_carrier_sm89.h "$OUT/qsb_carrier_sm89.h"
           nvcc -O3 -DQSB_ZEROS_N=24 -Xptxas=-v -o "$OUT/subset-full" subset.cu -lcrypto -lm >"$OUT/full.stdout" 2>"$OUT/full.stderr"
           test -x "$OUT/subset-full"
           echo SCALED_COMBINED_FULL_BUILD_PASS
