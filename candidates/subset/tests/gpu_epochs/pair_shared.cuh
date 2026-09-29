@@ -250,13 +250,47 @@ __device__ __forceinline__ void qsb_pair_second_sha_z(uint32_t *state,uint64_t *
     z[2]=((uint64_t)s2[2]<<32)|(uint64_t)s2[3];
     z[3]=((uint64_t)s2[0]<<32)|(uint64_t)s2[1];
 }
+/* Public terminal PR #773 (fkiene): interleave the two independent outer
+ * epoch SHA-256 compressions round-by-round.  The current tree already ships
+ * qsb_sha256_init_transform_pair() for the same two-stream compression shape;
+ * this switch reuses it instead of carrying a second copy of the round macros.
+ * 0 restores the promoted two serial qsb_pair_second_sha_z() calls exactly. */
+#ifndef QSB_GATE_PAIR
+#define QSB_GATE_PAIR 1
+#endif
+#ifndef QSB_EPOCH_SHA_PAIR
+#define QSB_EPOCH_SHA_PAIR 1
+#endif
+#if QSB_EPOCH_SHA_PAIR && QSB_GATE_PAIR
+__device__ __forceinline__ void qsb_sha256_init_transform_pair(
+    uint32_t *o0,uint32_t *w0,uint32_t *o1,uint32_t *w1);
+#endif
 __device__ __forceinline__ QsbPairEpochZ qsb_pair_epoch_z_value(
     const uint32_t*firstA,const uint32_t*firstB,int lane){
     uint32_t stateA[8],stateB[8];
     qsb_scheduled_window_hash_pair(stateA,stateB,lane,firstA,firstB);
     QsbPairEpochZ out;
+#if QSB_EPOCH_SHA_PAIR && QSB_GATE_PAIR
+    uint32_t bA[16],bB[16],sA[8],sB[8];
+    #pragma unroll
+    for(int i=0;i<8;i++){ bA[i]=stateA[i]; bB[i]=stateB[i]; }
+    bA[8]=0x80000000; bB[8]=0x80000000;
+    #pragma unroll
+    for(int i=9;i<15;i++){ bA[i]=0; bB[i]=0; }
+    bA[15]=0x00000100; bB[15]=0x00000100;
+    qsb_sha256_init_transform_pair(sA,bA,sB,bB);
+    out.a[0]=((uint64_t)sA[6]<<32)|(uint64_t)sA[7];
+    out.a[1]=((uint64_t)sA[4]<<32)|(uint64_t)sA[5];
+    out.a[2]=((uint64_t)sA[2]<<32)|(uint64_t)sA[3];
+    out.a[3]=((uint64_t)sA[0]<<32)|(uint64_t)sA[1];
+    out.b[0]=((uint64_t)sB[6]<<32)|(uint64_t)sB[7];
+    out.b[1]=((uint64_t)sB[4]<<32)|(uint64_t)sB[5];
+    out.b[2]=((uint64_t)sB[2]<<32)|(uint64_t)sB[3];
+    out.b[3]=((uint64_t)sB[0]<<32)|(uint64_t)sB[1];
+#else
     qsb_pair_second_sha_z(stateA,out.a);
     qsb_pair_second_sha_z(stateB,out.b);
+#endif
     return out;
 }
 __device__ __forceinline__ int qsb_k2s_front3_z(

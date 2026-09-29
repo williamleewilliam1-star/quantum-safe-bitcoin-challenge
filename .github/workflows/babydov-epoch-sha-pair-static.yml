@@ -1,0 +1,105 @@
+name: BABYDOV subset EPOCH_SHA_PAIR static A/B
+
+on:
+  push:
+    branches:
+      - babydov/subset-epoch-sha-pair-lab
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ab:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    steps:
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 libssl-dev ca-certificates
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Checkout experiment branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact promoted base plus bounded lab delta
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git diff --check 8d07d3ebad41a017dfaa5906b164f883a9b59348..HEAD
+          git diff --stat 8d07d3ebad41a017dfaa5906b164f883a9b59348..HEAD
+
+      - name: Compile control and paired epoch SHA
+        working-directory: candidates/subset
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p /tmp/epochpair
+          nvcc --version | tee /tmp/epochpair/nvcc-version.txt
+          for M in 0 1; do
+            nvcc -O3 -DQSB_ZEROS_N=24 -DQSB_CARRIER_BUILD=1 -DQSB_EPOCH_SHA_PAIR=$M -arch=sm_89 -cubin               -Xptxas -v -o /tmp/epochpair/m$M.cubin subset.cu 2> /tmp/epochpair/m$M.ptxas
+            cuobjdump -sass /tmp/epochpair/m$M.cubin > /tmp/epochpair/m$M.sass
+            cuobjdump -symbols /tmp/epochpair/m$M.cubin > /tmp/epochpair/m$M.symbols
+            sha256sum /tmp/epochpair/m$M.cubin > /tmp/epochpair/m$M.sha256
+          done
+
+      - name: Summarize kernel_digest resource and SASS deltas
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,re,pathlib
+          root=pathlib.Path('/tmp/epochpair')
+          out={}
+          for m in (0,1):
+              ptx=(root/f'm{m}.ptxas').read_text(errors='replace')
+              sass=(root/f'm{m}.sass').read_text(errors='replace')
+              pm=re.search(r"Compiling entry function '_Z13kernel_digest[^']*'.*?(?=ptxas info\s*: Compiling entry function|\Z)",ptx,re.S)
+              dp=pm.group(0) if pm else ''
+              mr=re.search(r'Used (\d+) registers',dp)
+              regs=int(mr.group(1)) if mr else 999
+              spillS=sum(map(int,re.findall(r'(\d+) bytes spill stores',dp)))
+              spillL=sum(map(int,re.findall(r'(\d+) bytes spill loads',dp)))
+              stack=sum(map(int,re.findall(r'(\d+) bytes stack frame',dp)))
+              parts=re.split(r'\n\s*Function : ',sass)
+              dig=next((p for p in parts if p.startswith('_Z13kernel_digest')),'')
+              inst=[ln for ln in dig.splitlines() if re.search(r'/\*[0-9a-fA-F]{4,}\*/',ln)]
+              def n(p): return sum(bool(re.search(p,x)) for x in inst)
+              out[str(m)]={
+                  'registers':regs,'spill_stores_B':spillS,'spill_loads_B':spillL,'stack_B':stack,
+                  'instructions':len(inst),'IMAD':n(r'\bIMAD'),'IMAD_IADD':n(r'\bIMAD\.IADD'),
+                  'IMAD_X':n(r'\bIMAD\.X'),'IADD3':n(r'\bIADD3'),'SHF':n(r'\bSHF'),
+                  'LOP3':n(r'\bLOP3'),'MOV':n(r'\bMOV'),'BRA':n(r'\bBRA'),
+                  'cubin_bytes':(root/f'm{m}.cubin').stat().st_size,
+              }
+          base=out['0']; cand=out['1']
+          delta={k:(cand[k]-base[k]) for k in cand if isinstance(cand[k],int)}
+          result={'control':base,'epoch_sha_pair':cand,'delta':delta}
+          (root/'summary.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,indent=2))
+          if cand['spill_stores_B'] or cand['spill_loads_B'] or cand['stack_B']:
+              raise SystemExit('candidate introduced spill/stack')
+          if cand['registers'] > 128:
+              raise SystemExit('candidate exceeds 128-register occupancy target')
+          PY
+
+      - name: Build native carrier for candidate
+        working-directory: candidates/subset
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ./build_carrier.sh 24 2>&1 | tee /tmp/epochpair/build-carrier.log
+          cp qsb_carrier_sm89.h /tmp/epochpair/qsb_carrier_sm89.h
+          sha256sum qsb_carrier_sm89.h | tee /tmp/epochpair/carrier-header.sha256
+
+      - name: Upload A/B artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: qsb-subset-epoch-sha-pair-ab
+          retention-days: 7
+          path: /tmp/epochpair/*
+
