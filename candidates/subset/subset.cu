@@ -12,5 +12,7 @@
  * Public donor attribution: af2d81b3 / PR #2280. Not a Yukon submission. */
 #define QSB_SC_PP 1
 #define QSB_SC_LATE 1
+#ifndef QSB_SC_OPS
 #define QSB_SC_OPS 0
+#endif
 #include "tests/gpu_epochs/tree.cu"

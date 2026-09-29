@@ -1,0 +1,81 @@
+name: BABYDOV block512 SC_PP/LATE OPS sweep
+
+on:
+  push:
+    branches:
+      - babydov/subset-block512-scpl-ops-sweep-20260929
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 ca-certificates
+          rm -rf /var/lib/apt/lists/*
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Compile all valid SC_OPS masks
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          OUT=/tmp/ops
+          mkdir -p "$OUT"
+          cd "$GITHUB_WORKSPACE/candidates/subset"
+          printf 'mask,rc\n' > "$OUT/compile.csv"
+          for m in $(seq 0 127); do
+            if (( m & 66 )); then continue; fi
+            set +e
+            nvcc -O3 -DQSB_ZEROS_N=24 -DQSB_CARRIER_BUILD=1 -DQSB_SC_OPS=$m \
+              -arch=sm_89 -cubin -Xptxas -v -o "$OUT/m$m.cubin" subset.cu \
+              >"$OUT/m$m.stdout" 2>"$OUT/m$m.ptxas"
+            rc=$?
+            set -e
+            echo "$m,$rc" >> "$OUT/compile.csv"
+            if [ "$rc" -eq 0 ]; then
+              cuobjdump -sass "$OUT/m$m.cubin" > "$OUT/m$m.sass"
+            fi
+          done
+      - name: Rank static candidates
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import re,json,pathlib,csv
+          root=pathlib.Path('/tmp/ops'); rows=[]
+          for rec in csv.DictReader((root/'compile.csv').open()):
+              m=int(rec['mask']); rc=int(rec['rc'])
+              if rc: rows.append({'mask':m,'rc':rc}); continue
+              ptx=(root/f'm{m}.ptxas').read_text(errors='replace')
+              q=re.search(r"Compiling entry function '_Z13kernel_digest[^']*'.*?(?=ptxas info\s*: Compiling entry function|\Z)",ptx,re.S)
+              sec=q.group(0) if q else ''
+              def vals(p): return [int(x) for x in re.findall(p,sec)]
+              sass=(root/f'm{m}.sass').read_text(errors='replace')
+              parts=re.split(r'\n\s*Function : ',sass)
+              dig=next((x for x in parts if x.startswith('_Z13kernel_digest')),'')
+              inst=sum(bool(re.search(r'/\*[0-9a-fA-F]{4,}\*/',ln)) for ln in dig.splitlines())
+              rows.append({'mask':m,'rc':0,'regs':(vals(r'Used (\d+) registers') or [999])[0],
+                           'stack':sum(vals(r'(\d+) bytes stack frame')),
+                           'spill_store':sum(vals(r'(\d+) bytes spill stores')),
+                           'spill_load':sum(vals(r'(\d+) bytes spill loads')),
+                           'sass_instructions':inst})
+          good=[r for r in rows if r.get('rc')==0]
+          ranked=sorted(good,key=lambda r:(r['spill_store']+r['spill_load'],r['stack'],r['sass_instructions'],r['regs'],r['mask']))
+          (root/'summary.json').write_text(json.dumps({'all':rows,'ranked':ranked},indent=2)+'\n')
+          print(json.dumps(ranked[:20],indent=2))
+          assert good
+          PY
+      - name: Upload sweep evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qsb-block512-scpl-ops-sweep
+          retention-days: 7
+          path: /tmp/ops/*
