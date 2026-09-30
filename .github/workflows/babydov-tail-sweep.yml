@@ -1,0 +1,153 @@
+name: BABYDOV subset tail/cbank static sweep
+
+on:
+  push:
+    branches:
+      - babydov/subset-tail-sweep-20260930
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    steps:
+      - name: Install dependencies
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 libssl-dev ca-certificates
+          rm -rf /var/lib/apt/lists/*
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify frontier plus workflow only
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git diff --check ff27a2b66990a3eb554a1d4453e896c0397337ba..HEAD
+          test "$(git diff --name-only ff27a2b66990a3eb554a1d4453e896c0397337ba..HEAD | grep -v '^.github/workflows/babydov-tail-sweep.yml$' | wc -l)" -eq 0
+
+      - name: Compile static variants
+        working-directory: candidates/subset
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p /tmp/tailsweep
+          nvcc --version > /tmp/tailsweep/nvcc-version.txt
+          python3 - <<'PY'
+          import subprocess, pathlib
+          variants = {
+            "base": [],
+            "outer_litk": ["-DQSB_OUTER_LITK=1"],
+            "r_cbank_tails": ["-DQSB_R_CBANK_TAILS=1"],
+            "outer_r_cbank": ["-DQSB_OUTER_LITK=1", "-DQSB_R_CBANK_TAILS=1"],
+            "stagger1": ["-DQSB_PARK128=0", "-DQSB_TAIL_STAGGER=1"],
+            "stagger1_r_cbank": ["-DQSB_PARK128=0", "-DQSB_TAIL_STAGGER=1", "-DQSB_R_CBANK_TAILS=1"],
+            "stagger1_weave1": ["-DQSB_PARK128=0", "-DQSB_TAIL_STAGGER=1", "-DQSB_TAIL_WEAVE=1"],
+            "stagger1_weave2": ["-DQSB_PARK128=0", "-DQSB_TAIL_STAGGER=1", "-DQSB_TAIL_WEAVE=2"],
+            "stagger1_weave3": ["-DQSB_PARK128=0", "-DQSB_TAIL_STAGGER=1", "-DQSB_TAIL_WEAVE=3"],
+          }
+          root = pathlib.Path("/tmp/tailsweep")
+          for name, defs in variants.items():
+              cmd = [
+                  "nvcc", "-O3", "-DQSB_ZEROS_N=24", "-DQSB_CARRIER_BUILD=1",
+                  "-arch=sm_89", "-cubin", "-Xptxas", "-v",
+                  "-o", str(root / f"{name}.cubin"), "subset.cu", *defs,
+              ]
+              cp = subprocess.run(cmd, text=True, capture_output=True)
+              (root / f"{name}.ptxas").write_text(cp.stderr)
+              (root / f"{name}.stdout").write_text(cp.stdout)
+              print(name, "rc", cp.returncode, "defs", " ".join(defs))
+              if cp.returncode:
+                  print(cp.stderr)
+                  raise SystemExit(f"{name} compile failed")
+              with open(root / f"{name}.sass", "w") as f:
+                  subprocess.run(["cuobjdump", "-sass", str(root / f"{name}.cubin")], stdout=f, check=True, text=True)
+          PY
+
+      - name: Summarize static census
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, json
+          root = pathlib.Path("/tmp/tailsweep")
+          variants = [
+              "base", "outer_litk", "r_cbank_tails", "outer_r_cbank",
+              "stagger1", "stagger1_r_cbank",
+              "stagger1_weave1", "stagger1_weave2", "stagger1_weave3",
+          ]
+          out = {}
+          for name in variants:
+              ptx = (root / f"{name}.ptxas").read_text(errors="replace")
+              sass = (root / f"{name}.sass").read_text(errors="replace")
+              pm = re.search(
+                  r"Compiling entry function '_Z13kernel_digest[^']*'.*?(?=ptxas info\s*: Compiling entry function|\Z)",
+                  ptx, re.S,
+              )
+              dp = pm.group(0) if pm else ""
+              def one(pattern, default=0):
+                  m = re.search(pattern, dp)
+                  return int(m.group(1)) if m else default
+              parts = re.split(r"\n\s*Function : ", sass)
+              dig = next((p for p in parts if p.startswith("_Z13kernel_digest")), "")
+              tail_parts = [
+                  p for p in parts
+                  if p.startswith("_Z20qsb_pair_tail3_value")
+                  or p.startswith("_Z22qsb_pair_finish3_value")
+                  or p.startswith("_Z21qsb_pair_gate3_value")
+                  or p.startswith("_Z21qsb_pair_weave3_value")
+              ]
+              inst_re = re.compile(r"/\*[0-9a-fA-F]{4,}\*/")
+              dig_inst = [ln for ln in dig.splitlines() if inst_re.search(ln)]
+              tail_inst = [ln for p in tail_parts for ln in p.splitlines() if inst_re.search(ln)]
+              all_inst = [ln for ln in sass.splitlines() if inst_re.search(ln)]
+              def count(lines, pattern):
+                  rx = re.compile(pattern)
+                  return sum(bool(rx.search(x)) for x in lines)
+              metrics = {
+                  "registers": one(r"Used (\d+) registers", 999),
+                  "spill_stores_B": sum(map(int, re.findall(r"(\d+) bytes spill stores", dp))),
+                  "spill_loads_B": sum(map(int, re.findall(r"(\d+) bytes spill loads", dp))),
+                  "stack_B": sum(map(int, re.findall(r"(\d+) bytes stack frame", dp))),
+                  "smem_B": one(r"(\d+) bytes smem", 0),
+                  "digest_instructions": len(dig_inst),
+                  "tail_instructions": len(tail_inst),
+                  "all_sass_instructions": len(all_inst),
+                  "digest_LDC": count(dig_inst, r"\bLDC"),
+                  "digest_LDS": count(dig_inst, r"\bLDS"),
+                  "digest_LDG": count(dig_inst, r"\bLDG"),
+                  "digest_IMAD": count(dig_inst, r"\bIMAD"),
+                  "digest_IADD3": count(dig_inst, r"\bIADD3"),
+                  "digest_MOV": count(dig_inst, r"\bMOV"),
+                  "tail_LDC": count(tail_inst, r"\bLDC"),
+                  "tail_LDS": count(tail_inst, r"\bLDS"),
+                  "tail_LDG": count(tail_inst, r"\bLDG"),
+                  "tail_IMAD": count(tail_inst, r"\bIMAD"),
+                  "tail_IADD3": count(tail_inst, r"\bIADD3"),
+                  "tail_MOV": count(tail_inst, r"\bMOV"),
+                  "cubin_bytes": (root / f"{name}.cubin").stat().st_size,
+              }
+              out[name] = metrics
+          base = out["base"]
+          result = {}
+          for name, metrics in out.items():
+              result[name] = {
+                  "metrics": metrics,
+                  "delta": {k: metrics[k] - base[k] for k in metrics},
+              }
+          (root / "summary.json").write_text(json.dumps(result, indent=2) + "\n")
+          print(json.dumps(result, indent=2))
+          PY
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: qsb-tail-cbank-static-sweep
+          retention-days: 7
+          path: /tmp/tailsweep/*
