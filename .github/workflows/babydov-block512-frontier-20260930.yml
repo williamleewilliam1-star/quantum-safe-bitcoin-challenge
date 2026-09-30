@@ -25,6 +25,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git -C "$GITHUB_WORKSPACE" rev-parse --is-inside-work-tree
+          cd "$GITHUB_WORKSPACE"
           python3 qualification/test_invariants.py
           python3 -m unittest -v harness.test_gpu_wrap
           git diff --check ff27a2b66990a3eb554a1d4453e896c0397337ba
