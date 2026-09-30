@@ -13,14 +13,14 @@ jobs:
     timeout-minutes: 20
     container: nvidia/cuda:12.8.1-devel-ubuntu22.04
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
       - name: Build prerequisites
         run: |
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libssl-dev python3 binutils git
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - name: Source layout and CPU reference checks
         shell: bash
         run: |
