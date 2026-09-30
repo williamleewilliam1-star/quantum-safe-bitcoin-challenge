@@ -1,0 +1,110 @@
+name: BABYDOV subset dormant knob static sweep
+
+on:
+  push:
+    branches:
+      - babydov/subset-dormant-sweep-20260930
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    steps:
+      - name: Install dependencies
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 libssl-dev ca-certificates
+          rm -rf /var/lib/apt/lists/*
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify frontier plus workflow only
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git diff --check ff27a2b66990a3eb554a1d4453e896c0397337ba..HEAD
+          test "$(git diff --name-only ff27a2b66990a3eb554a1d4453e896c0397337ba..HEAD | grep -v '^.github/workflows/babydov-dormant-sweep.yml$' | wc -l)" -eq 0
+
+      - name: Compile sweep
+        working-directory: candidates/subset
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p /tmp/dormant
+          nvcc --version > /tmp/dormant/nvcc-version.txt
+          python3 - <<'PY'
+          import subprocess, pathlib, json
+          variants = {
+            "base": [],
+            "outer_litk": ["-DQSB_OUTER_LITK=1"],
+            "seed_k32_sub": ["-DQSB_SEED_K32_SUB=1"],
+            "gather_l1_noalloc_cold": ["-DQSB_GATHER_L1_POLICY=1"],
+            "gather_l1_evictfirst_cold": ["-DQSB_GATHER_L1_POLICY=2"],
+            "gather_l1_noalloc_all": ["-DQSB_GATHER_L1_POLICY=3"],
+          }
+          root=pathlib.Path("/tmp/dormant")
+          for name,defs in variants.items():
+              cmd=["nvcc","-O3","-DQSB_ZEROS_N=24","-DQSB_CARRIER_BUILD=1","-arch=sm_89","-cubin","-Xptxas","-v",
+                   "-o",str(root/f"{name}.cubin"),"subset.cu",*defs]
+              cp=subprocess.run(cmd,text=True,capture_output=True)
+              (root/f"{name}.ptxas").write_text(cp.stderr)
+              (root/f"{name}.stdout").write_text(cp.stdout)
+              print(name, "rc", cp.returncode)
+              if cp.returncode:
+                  raise SystemExit(f"{name} compile failed")
+              with open(root/f"{name}.sass","w") as f:
+                  subprocess.run(["cuobjdump","-sass",str(root/f"{name}.cubin")],stdout=f,check=True,text=True)
+          PY
+
+      - name: Summarize
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib,re,json
+          root=pathlib.Path('/tmp/dormant')
+          variants=['base','outer_litk','seed_k32_sub','gather_l1_noalloc_cold','gather_l1_evictfirst_cold','gather_l1_noalloc_all']
+          out={}
+          for name in variants:
+              ptx=(root/f'{name}.ptxas').read_text(errors='replace')
+              sass=(root/f'{name}.sass').read_text(errors='replace')
+              pm=re.search(r"Compiling entry function '_Z13kernel_digest[^']*'.*?(?=ptxas info\s*: Compiling entry function|\Z)",ptx,re.S)
+              dp=pm.group(0) if pm else ''
+              def one(p,default=0):
+                  m=re.search(p,dp)
+                  return int(m.group(1)) if m else default
+              parts=re.split(r'\n\s*Function : ',sass)
+              dig=next((p for p in parts if p.startswith('_Z13kernel_digest')),'')
+              inst=[ln for ln in dig.splitlines() if re.search(r'/\*[0-9a-fA-F]{4,}\*/',ln)]
+              def n(p): return sum(bool(re.search(p,x)) for x in inst)
+              out[name]={
+                'registers':one(r'Used (\d+) registers',999),
+                'spill_stores_B':sum(map(int,re.findall(r'(\d+) bytes spill stores',dp))),
+                'spill_loads_B':sum(map(int,re.findall(r'(\d+) bytes spill loads',dp))),
+                'stack_B':sum(map(int,re.findall(r'(\d+) bytes stack frame',dp))),
+                'instructions':len(inst),
+                'LDC':n(r'\bLDC'),'LDS':n(r'\bLDS'),'LDG':n(r'\bLDG'),'IMAD':n(r'\bIMAD'),
+                'IADD3':n(r'\bIADD3'),'SHF':n(r'\bSHF'),'LOP3':n(r'\bLOP3'),'MOV':n(r'\bMOV'),'BRA':n(r'\bBRA'),
+                'cubin_bytes':(root/f'{name}.cubin').stat().st_size,
+              }
+          base=out['base']
+          result={}
+          for name,v in out.items():
+              result[name]={'metrics':v,'delta':{k:v[k]-base[k] for k in v if isinstance(v[k],int)}}
+          (root/'summary.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,indent=2))
+          PY
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: qsb-dormant-static-sweep
+          retention-days: 7
+          path: /tmp/dormant/*
