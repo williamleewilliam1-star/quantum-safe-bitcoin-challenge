@@ -1,0 +1,61 @@
+name: BABYDOV block512 current-frontier qualification
+on:
+  push:
+    branches: [babydov/subset-block512-frontier-20260930]
+permissions:
+  contents: read
+concurrency:
+  group: babydov-block512-frontier-20260930
+  cancel-in-progress: false
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build prerequisites
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq libssl-dev python3 binutils git
+      - name: Source layout and CPU reference checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 qualification/test_invariants.py
+          python3 -m unittest -v harness.test_gpu_wrap
+          git diff --check ff27a2b66990a3eb554a1d4453e896c0397337ba
+      - name: Compile control and candidate under identical CUDA 12.8
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=/tmp/block512-frontier-evidence
+          mkdir -p "$OUT" /tmp/block512-control
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git archive ff27a2b66990a3eb554a1d4453e896c0397337ba candidates/subset | tar -x -C /tmp/block512-control
+          nvcc --version | tee "$OUT/nvcc-version.txt"
+          for ARM in control candidate; do
+            D="$OUT/$ARM"
+            mkdir -p "$D"
+            if [ "$ARM" = control ]; then SRC=/tmp/block512-control/candidates/subset; else SRC="$GITHUB_WORKSPACE/candidates/subset"; fi
+            cd "$SRC"
+            bash build_carrier.sh 24 2>&1 | tee "$D/carrier.log"
+            LOGDIR=$(sed -n 's/^build logs: //p' "$D/carrier.log" | tail -1)
+            test -d "$LOGDIR"
+            cp "$LOGDIR/ptxas.log" "$LOGDIR/sass.txt" "$LOGDIR/c.cubin" "$D/"
+            cp qsb_carrier_sm89.h "$D/"
+            nvcc -O3 -DQSB_ZEROS_N=24 -Xptxas=-v -o "$D/subset-full" subset.cu -lcrypto -lm >"$D/full.stdout" 2>"$D/full.stderr"
+            test -x "$D/subset-full"
+            sha256sum "$D/c.cubin" "$D/qsb_carrier_sm89.h" > "$D/SHA256SUMS.txt"
+            printf '%s\n' "$ARM FULL_BUILD_PASS"
+          done
+      - name: Preserve compiler evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qsb-block512-frontier-20260930
+          path: /tmp/block512-frontier-evidence
+          retention-days: 7
