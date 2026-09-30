@@ -231,7 +231,7 @@ __device__ __constant__ uint8_t COMBO_SYMBOLS[100] = {
 #error "QSB_SHA_SCHED_V4 must be 0 or 1"
 #endif
 #ifndef QSB_OUTER_LITK
-#define QSB_OUTER_LITK 0
+#define QSB_OUTER_LITK 1
 #endif
 #if QSB_OUTER_LITK != 0 && QSB_OUTER_LITK != 1
 #error "QSB_OUTER_LITK must be 0 or 1"
@@ -849,7 +849,7 @@ __device__ uint64_t BINOM_C[151][10];
  * across both tails. The front keeps its ABI (its chain loop is not re-allocated by this). Same __constant__
  * words, same field operations, in the same order: bit-identical. */
 #ifndef QSB_R_CBANK_TAILS
-#define QSB_R_CBANK_TAILS 0
+#define QSB_R_CBANK_TAILS 1
 #endif
 #if QSB_R_CBANK_TAILS < 0 || QSB_R_CBANK_TAILS > 1
 #error "QSB_R_CBANK_TAILS must be 0 or 1"

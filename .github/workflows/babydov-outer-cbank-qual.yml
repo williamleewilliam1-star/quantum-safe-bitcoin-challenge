@@ -1,0 +1,58 @@
+name: BABYDOV qualify outer-litk r-cbank candidate
+
+on:
+  push:
+    branches:
+      - babydov/subset-outer-cbank-qual-20260930
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    steps:
+      - name: Install dependencies
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 libssl-dev ca-certificates
+          rm -rf /var/lib/apt/lists/*
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify candidate delta before generated carrier
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git diff --check ff27a2b66990a3eb554a1d4453e896c0397337ba..HEAD
+          git diff --name-only ff27a2b66990a3eb554a1d4453e896c0397337ba..HEAD
+          test "$(git diff --name-only ff27a2b66990a3eb554a1d4453e896c0397337ba..HEAD | grep -v '^.github/workflows/babydov-outer-cbank-qual.yml$' | grep -v '^candidates/subset/tests/gpu_epochs/tree.cu$' | wc -l)" -eq 0
+
+      - name: Build exact native sm89 carrier and full candidate
+        working-directory: candidates/subset
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p /tmp/qual
+          nvcc --version | tee /tmp/qual/nvcc-version.txt
+          ./build_carrier.sh 24 2>&1 | tee /tmp/qual/build-carrier.log
+          cp qsb_carrier_sm89.h /tmp/qual/qsb_carrier_sm89.h
+          sha256sum qsb_carrier_sm89.h | tee /tmp/qual/header.sha256
+          nvcc -O3 -DQSB_ZEROS_N=24 -Xptxas=-v -o /tmp/qual/qsb-subset subset.cu -lcrypto -lm 2> /tmp/qual/full-ptxas.txt
+          sha256sum /tmp/qual/qsb-subset | tee /tmp/qual/binary.sha256
+          grep -A6 -B2 "kernel_digest" /tmp/qual/full-ptxas.txt | tee /tmp/qual/kernel-digest-ptxas.txt || true
+          grep -q "0 bytes spill stores, 0 bytes spill loads" /tmp/qual/kernel-digest-ptxas.txt
+          grep -q "Used 128 registers" /tmp/qual/kernel-digest-ptxas.txt
+
+      - name: Upload exact generated carrier
+        uses: actions/upload-artifact@v4
+        with:
+          name: qsb-outer-cbank-qualified-carrier
+          retention-days: 7
+          path: /tmp/qual/*
