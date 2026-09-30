@@ -45,7 +45,7 @@ jobs:
           variants = {
             "base": [],
             "outer_litk": ["-DQSB_OUTER_LITK=1"],
-            "seed_k32_sub": ["-DQSB_SEED_K32_SUB=1"],
+            "seed_k32_sub": ["-DQSB_SEED_K32_SUB=1", "-DQSB_K32_SUBCUT=3"],
             "gather_l1_noalloc_cold": ["-DQSB_GATHER_L1_POLICY=1"],
             "gather_l1_evictfirst_cold": ["-DQSB_GATHER_L1_POLICY=2"],
             "gather_l1_noalloc_all": ["-DQSB_GATHER_L1_POLICY=3"],
