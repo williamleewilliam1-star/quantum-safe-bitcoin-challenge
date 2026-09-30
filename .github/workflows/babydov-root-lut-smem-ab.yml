@@ -1,0 +1,99 @@
+name: BABYDOV subset ROOT_LUT_SMEM static A/B
+
+on:
+  push:
+    branches:
+      - babydov/subset-root-lut-smem-ab-20260930
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ab:
+    runs-on: ubuntu-latest
+    container:
+      image: nvidia/cuda:12.8.1-devel-ubuntu22.04
+    steps:
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git python3 libssl-dev ca-certificates
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Checkout experiment branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify exact current frontier plus workflow only
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git diff --check ff27a2b66990a3eb554a1d4453e896c0397337ba..HEAD
+          git diff --stat ff27a2b66990a3eb554a1d4453e896c0397337ba..HEAD
+          test "$(git diff --name-only ff27a2b66990a3eb554a1d4453e896c0397337ba..HEAD | grep -v '^.github/workflows/babydov-root-lut-smem-ab.yml$' | wc -l)" -eq 0
+
+      - name: Compile baseline and ROOT_LUT_SMEM
+        working-directory: candidates/subset
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p /tmp/rootlut
+          nvcc --version | tee /tmp/rootlut/nvcc-version.txt
+          for M in 0 1; do
+            nvcc -O3 -DQSB_ZEROS_N=24 -DQSB_CARRIER_BUILD=1 -DQSB_ROOT_LUT_SMEM=$M \
+              -arch=sm_89 -cubin -Xptxas -v \
+              -o /tmp/rootlut/m$M.cubin subset.cu 2> /tmp/rootlut/m$M.ptxas
+            cuobjdump -sass /tmp/rootlut/m$M.cubin > /tmp/rootlut/m$M.sass
+            cuobjdump -symbols /tmp/rootlut/m$M.cubin > /tmp/rootlut/m$M.symbols
+            sha256sum /tmp/rootlut/m$M.cubin > /tmp/rootlut/m$M.sha256
+          done
+
+      - name: Summarize kernel_digest and divstep-table deltas
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,re,pathlib,collections
+          root=pathlib.Path('/tmp/rootlut')
+          out={}
+          for m in (0,1):
+              ptx=(root/f'm{m}.ptxas').read_text(errors='replace')
+              sass=(root/f'm{m}.sass').read_text(errors='replace')
+              pm=re.search(r"Compiling entry function '_Z13kernel_digest[^']*'.*?(?=ptxas info\s*: Compiling entry function|\Z)",ptx,re.S)
+              dp=pm.group(0) if pm else ''
+              mr=re.search(r'Used (\d+) registers',dp)
+              regs=int(mr.group(1)) if mr else 999
+              spillS=sum(map(int,re.findall(r'(\d+) bytes spill stores',dp)))
+              spillL=sum(map(int,re.findall(r'(\d+) bytes spill loads',dp)))
+              stack=sum(map(int,re.findall(r'(\d+) bytes stack frame',dp)))
+              smem=max([int(x) for x in re.findall(r'(\d+) bytes smem',dp)] or [0])
+              parts=re.split(r'\n\s*Function : ',sass)
+              dig=next((p for p in parts if p.startswith('_Z13kernel_digest')),'')
+              inst=[ln for ln in dig.splitlines() if re.search(r'/\*[0-9a-fA-F]{4,}\*/',ln)]
+              def n(p): return sum(bool(re.search(p,x)) for x in inst)
+              out[str(m)]={
+                  'registers':regs,'spill_stores_B':spillS,'spill_loads_B':spillL,'stack_B':stack,'smem_B':smem,
+                  'instructions':len(inst),'LDC':n(r'\bLDC'),'LDS':n(r'\bLDS'),'LDG':n(r'\bLDG'),
+                  'CPASYNC':n(r'\bCPASYNC'),'BAR':n(r'\bBAR'),'IMAD':n(r'\bIMAD'),'IADD3':n(r'\bIADD3'),
+                  'SHF':n(r'\bSHF'),'LOP3':n(r'\bLOP3'),'MOV':n(r'\bMOV'),'BRA':n(r'\bBRA'),
+                  'cubin_bytes':(root/f'm{m}.cubin').stat().st_size,
+              }
+          base,cand=out['0'],out['1']
+          delta={k:cand[k]-base[k] for k in cand if isinstance(cand[k],int)}
+          result={'baseline':base,'root_lut_smem':cand,'delta':delta}
+          (root/'summary.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,indent=2))
+          if cand['spill_stores_B'] or cand['spill_loads_B'] or cand['stack_B']:
+              raise SystemExit('candidate introduced spill/stack')
+          if cand['registers'] > 128:
+              raise SystemExit('candidate exceeds 128-register occupancy target')
+          PY
+
+      - name: Upload A/B artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: qsb-root-lut-smem-ab
+          retention-days: 7
+          path: /tmp/rootlut/*
